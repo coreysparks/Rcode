@@ -1,0 +1,146 @@
+---
+title: "Longitudinal Models 1"
+author: "coreysparks"
+date: "October 8, 2014"
+output: html_document
+---
+
+In this example, we will use hierarchical models to do some longitudinal modeling of data from the [ECLS-K ](http://nces.ed.gov/ecls/kinderdatainformation.asp). Specifically, we will model changes in a student's standardized math score from kindergarten to 8th grade. 
+
+First we load our data
+```{r}
+load("~/Google Drive/dem7903_App_Hier/data/eclsk.Rdata")
+names(eclsk)<-tolower(names(eclsk))
+library (car)
+library(lmtest)
+library(lattice)
+library(lme4)
+#get out only the variables I'm going to use for this example
+myvars<-c( "childid","gender", "race", "r1_kage","r4age", "r5age", "r6age", "r7age","c1r4mtsc", "c4r4mtsc", "c5r4mtsc", "c6r4mtsc", "c7r4mtsc", "w1povrty","w1povrty","w3povrty", "w5povrty", "w8povrty","wkmomed", "s2_id")
+eclsk<-eclsk[,myvars]
+
+#recode outcome, math score at each of the 4 waves
+eclsk$math1<-ifelse(eclsk$c1r4mtsc==-9,NA, eclsk$c1r4mtsc)
+eclsk$math2<-ifelse(eclsk$c4r4mtsc==-9,NA, eclsk$c4r4mtsc)
+eclsk$math3<-ifelse(eclsk$c5r4mtsc==-9,NA, eclsk$c5r4mtsc)
+eclsk$math4<-ifelse(eclsk$c6r4mtsc==-9,NA, eclsk$c6r4mtsc)
+eclsk$math5<-ifelse(eclsk$c7r4mtsc==-9,NA, eclsk$c7r4mtsc)
+
+eclsk$age1<-ifelse(eclsk$r1_kage==-9, NA, eclsk$r1_kage/12)
+eclsk$age2<-ifelse(eclsk$r4age==-9, NA, eclsk$r4age/12)
+#for the later waves, the NCES group the ages into ranges of months, so 1= <105 months, 2=105 to 108 months. So, I fix the age at the midpoint of the interval they give, and make it into years by dividing by 12
+eclsk$age3<-recode(eclsk$r5age,recodes="1=105; 2=107; 3=109; 4=112; 5=115; 6=117; -9=NA")/12
+eclsk$age4<-recode(eclsk$r6age,recodes="1=118; 2=129; 3=135; 4=141; 5=155; -9=NA")/12
+eclsk$age5<-recode(eclsk$r7age,recodes="1=155; 2=166; 3=172; 4=178; 5=192; -9=NA")/12
+
+eclsk$pov1<-ifelse(eclsk$w1povrty==1,1,0)
+eclsk$pov2<-ifelse(eclsk$w1povrty==1,1,0)
+eclsk$pov3<-ifelse(eclsk$w3povrty==1,1,0)
+eclsk$pov4<-ifelse(eclsk$w5povrty==1,1,0)
+eclsk$pov5<-ifelse(eclsk$w5povrty==1,1,0)
+
+#Recode race with white, non Hispanic as reference using dummy vars
+eclsk$hisp<-recode (eclsk$race, recodes="3:4=1;-9=NA; else=0")
+eclsk$black<-recode (eclsk$race, recodes="2=1;-9=NA; else=0")
+eclsk$asian<-recode (eclsk$race, recodes="5=1;-9=NA; else=0")
+eclsk$nahn<-recode (eclsk$race, recodes="6:7=1;-9=NA; else=0")
+eclsk$other<-recode (eclsk$race, recodes="8=1;-9=NA; else=0")
+eclsk$male<-recode(eclsk$gender, recodes="1=1; 2=0; -9=NA")
+eclsk$mlths<-recode(eclsk$wkmomed, recodes = "1:2=1; 3:9=0; else = NA")
+eclsk$mgths<-recode(eclsk$wkmomed, recodes = "1:3=0; 4:9=1; else =NA") 
+
+```
+
+To analyze data longitudinally, we need to reshape the data from the current "wide" format (repeated measures in columns) to a "long" format (repeated observations in rows). The `reshape()` function allows us to do this easily. It allows us to specify our repeated measures, time varying covariates as well as time-constant covariates.
+
+This is just a little example using the first 20 kids, just to illustrate this process.
+```{r}
+test<-eclsk[1:20,]
+#look at the data in "wide" format
+head(test)
+
+e.longt<-reshape(test, idvar="childid", varying=list(math = c("math1", "math2", "math3", "math4","math5"),
+                                         age = c("age1", "age2", "age3", "age4", "age5"),
+                                         pov= c("pov1", "pov2", "pov3", "pov4", "pov5")),
+                                         times=1:5,direction="long",  
+                                          drop = names(test)[3:15])
+
+#here we look at the new data set, in the "long" format
+
+head(e.longt[order(e.longt$childid, e.longt$time),c(1,2,8,9,16,17)], n=25)
+```
+
+We can plot the children's scores over time to see trends within child. Some kids are missing at all times, others don't have complete data for all times, but you can see the trends within child.
+```{r}
+xyplot(math1~age1|childid, data=e.longt,
+       panel=function(x,y){
+       panel.xyplot(x,y)
+     panel.lmline(x,y,)})
+```
+
+
+Now we do the entire data set
+```{r}
+e.long<-reshape(eclsk, idvar="childid",  varying=list(math = c("math1", "math2", "math3", "math4","math5"),
+                                         age = c("age1", "age2", "age3", "age4", "age5"),
+                                         pov= c("pov1", "pov2", "pov3", "pov4", "pov5")),
+                                         times=1:5,direction="long",  
+                                          drop = names(test)[3:15])
+e.long<-e.long[order(e.long$childid, e.long$time),]
+head(e.long, n=20)
+
+```
+
+###Models
+Now we fit models to the longitudinal data. We start simple then move into growth curve models. This follows the presentation in [Singer and Willett (2003)](http://www.ats.ucla.edu/stat/examples/alda/) Chapters 3-6.
+```{r}
+#basic linear model
+fit.1<-glm(math1~age1+male+black+hisp+asian+nahn+other, data=e.long)
+summary(fit.1)
+
+#random intercept model for individual student differences
+fit.2<-lmer(math1~age1+male+black+hisp+asian+nahn+other+(1|childid), data=e.long)
+summary(fit.2)
+
+#individual trajectory model with random slope for time
+fit.3<-lmer(math1~age1+male+black+hisp+asian+nahn+other+(age1|childid), data=e.long)
+summary(fit.3)
+anova(fit.3, fit.2)
+
+#curvilinear trajectory model with random nonlinear time
+fit.4<-lmer(math1~age1+male+black+hisp+asian+nahn+other+I(age1^2)+(age1+I(age1^2)|childid), data=e.long)
+summary(fit.4)
+anova(fit.4, fit.3)
+
+#individual trajectory model with fixed effects for race and different population
+#trajectories for each race
+fit.5<-lmer(math1~age1*(male+black+hisp+asian+nahn+other)+(age1|childid), data=e.long)
+summary(fit.5)
+anova(fit.5, fit.4)
+AIC(fit.1)
+AIC(fit.2)
+AIC(fit.3)
+AIC(fit.4) #Best Fit
+AIC(fit.5)
+
+```
+
+
+### Covariance structure models
+Often, we may be interested in modeling the correlation among students over time. These models typically assume some form of structure to the covariance matrix of *either* the residuals *or* the random effects themselves. R's basic functions won't fit correlated random effect models, but we CAN do these in BUGS/JAGS (next time)
+
+If we want to model correlations among the **residuals** for individuals over time, we can use the functions in the `nlme` library, but only if your outcome is continuous. NO GLMMs ALLOWED!
+```{r}
+library(nlme)
+
+#here I fit the AR(1) covariance structure and compare it to model 3 from above
+fit.6<-lme(math1~age1+male+black+hisp+asian+nahn+other, random=~age1|childid, correlation=corAR1(,form=~time|childid), data=e.long, na.action="na.omit")
+summary(fit.6)
+
+fit.3l<-lme(math1~age1+male+black+hisp+asian+nahn+other, random=~age1|childid, data=e.long, na.action="na.omit")
+summary(fit.3l)
+anova(fit.6, fit.3l)
+
+```
+
+

@@ -1,0 +1,291 @@
+---
+title: "Bayesian Data Analysis 2 - Hierarchical Models 1"
+output: html_document
+---
+
+This example will go through the basics of using JAGS (https://sourceforge.net/projects/mcmc-jags/files/JAGS/3.x/) by way of the `rjags` library, for estimation of simple linear and generalized linear models. You must install both JAGS and rjags for this to work.
+
+We will use the BRFSS data for the state of Texas for our example, and use BMI as a continous outcome, and obesity status outcome (BMI >= 30) as a dichotomous outcome.
+
+First we load our data and recode some variables:
+```{r}
+library(rjags)
+library(dplyr)
+library(car)
+load("~/Google Drive/dem7903_App_Hier/data/brfss_11.Rdata")
+nams<-names(brfss_11)
+newnames<-gsub("_", "", nams)
+names(brfss_11)<-tolower(newnames)
+brfss_11$statefip<-sprintf("%02d", brfss_11$state )
+brfss_11$cofip<-sprintf("%03d", brfss_11$cnty )
+brfss_11$cofips<-paste(brfss_11$statefip, brfss_11$cofip, sep="")
+brfss_11$obese<-ifelse(brfss_11$bmi5/100 >=30, 1,0)
+brfss_11$black<-recode(brfss_11$racegr2, recodes="2=1; 9=NA; else=0", as.factor.result=F)
+brfss_11$white<-recode(brfss_11$racegr2, recodes="1=1; 9=NA; else=0", as.factor.result=F)
+brfss_11$other<-recode(brfss_11$racegr2, recodes="3:4=1; 9=NA; else=0", as.factor.result=F)
+brfss_11$hispanic<-recode(brfss_11$racegr2, recodes="5=1; 9=NA; else=0", as.factor.result=F)
+#education level
+brfss_11$lths<-recode(brfss_11$educa, recodes="1:3=1;9=NA; else=0", as.factor.result=F)
+brfss_11$coll<-recode(brfss_11$educa, recodes="5:6=1;9=NA; else=0", as.factor.result=F)
+brfss_11$agez<-scale(brfss_11$age, center=T, scale=T)
+brfss_11$lowinc<-recode(brfss_11$incomg, recodes = "1:3=1; 4:5=0; else=NA")
+```
+
+Next, I use the `filter` function from the dplyr library to select the observations from Texas.
+```{r}
+brf<-tbl_df(brfss_11)
+tx<-as.data.frame(filter(brf, state=="48", is.na(obese)==F, is.na(black)==F, is.na(lths)==F, is.na(lowinc)==F))
+nwncos<-table(tx$cofips)
+nwncos #Number of people within counties
+tx$conum<-rep(1:length(unique(tx$cofips)), nwncos[nwncos!=0])
+length(unique(tx$conum)) #Number of counties
+```
+
+## Linear Mixed model Example
+Here is a linear  mixed model for bmi. This model includes a random intercept and a few predictor variables
+There a loads of ways to do this, but I like doing it this way. It uses what is known as "nested indexing" in the BUGS language
+This is basically a way of explicitly nesting individuals within groups. 
+I write my code as a big string, then feed it to jags.
+
+```{r}
+model1<-"
+model{
+
+#Likelihood
+  for( i in 1:n)
+    {
+      bmi[i]~dnorm(mu[i], tau)
+      mu[i]<-b0+b[1]*black[i]+b[2]*hisp[i]+b[3]*other[i]+b[4]*lths[i]+b[5]*coll[i]+u[cofips[i]]
+    }
+
+for (j in 1:ncos)
+  {
+    u[j]~dnorm(0, tau_u)
+  }
+#priors
+b0~dnorm(0, .01)
+for(j in 1:5) { b[j]~dnorm(0, .01)}
+tau<-pow(sd, -2)
+sd~dunif(0,100)
+
+tau_u<-pow(sd_u, -2)
+sd_u~dunif(0,100)
+
+}
+"
+```
+
+Next, we have to make a data list for jags, which contains anything we are reading into jags as data. I z-score the bmi variable prior to putting into the model
+
+```{r}
+dat<-list(bmi=as.numeric(scale(tx$bmi5/100, center=T, scale=T)), obese=tx$obese, black=tx$black, hisp=tx$hispanic, other=tx$other, lths=tx$lths, coll=tx$coll, age=tx$agez, lowinc=tx$lowinc, n=length(tx$obese),cofips=tx$conum, ncos=length(unique(tx$cofips)))
+
+#quick summary
+lapply(dat, summary)
+```
+
+To use jags, we have to create a jags.model object, which contains the text representation of our model, our data, and some other parameters for the MCMC run
+
+```{r}
+
+init.rng1<-list(".RNG.seed" = 1234, ".RNG.name" = "base::Mersenne-Twister")
+init.rng2<-list(".RNG.seed" = 5678, ".RNG.name" = "base::Mersenne-Twister")
+mod<-jags.model(file=textConnection(model1), data=dat,inits =list(init.rng1, init.rng2) , n.chains=2)
+
+#next, we update the model, this is the "burn in" period
+update(mod, 1000)
+```
+
+
+Next, we examine a few other elements of the model, including the posterior densities of the parameters, and
+First, we must collect some samples of each parameter using the `coda.samples()` function.
+```{r}
+#burn in for 10,000 iterations
+update(mod, 10000)
+
+#sample 2000 samples from each chain (5,000/5 = 1000 * 2 chains = 2000)
+samps<-coda.samples(mod, variable.names=c("b0", "b", "sd", "sd_u"), n.iter=5000, n.thin=5)
+
+#Numerical summary of each parameter, here I also include the 90% credible interval:
+summary(samps, quantiles =  c(.025, .05, .95, .975))
+```
+
+
+The "effective sample size" tells us how many independent samples we have, out of the 1000* 2 chains (maximum = 2000 here). If this number is low, then we have a lot of autocorrelation in the chains
+```{r, fig.height=10, fig.width=8}
+effectiveSize(samps)
+
+#traceplot of the markov chains:
+par(mfrow=c(4,2))
+traceplot(samps[,c("b0", "b[1]", "b[2]","b[3]","b[4]", "b[5]", "sd", "sd_u" )])
+
+#Examine convergence of the Markov chains using the Gelman-Brooks-Rubin diagnostic
+gelman.diag(samps)
+
+#here's a way to get p-values for each of the beta's from the model using the samples:
+sampmat<-as.matrix(samps)
+str(sampmat)
+head(sampmat)
+apply(sampmat[, 1:5], 2, function(x) mean(x > 0)) # Get p(beta > 0)
+apply(sampmat[, 1:5], 2, function(x) mean(x < 0)) # Get p(beta < 0)
+
+```
+
+##Hierarchical LMM with random slopes and intercepts
+Now, we expand the model to include random slopes and intercepts. We *could* just sample the
+random coefficients from independent normal distributions, but we **should** sample them from a Multivariate Normal. This takes a little more coding in order to make the prior on the covariance matrix of the MN Normal, but also to transform it back into the variance scale (vs. precision), and calculate the correlation parameter.
+
+
+```{r, fig.height=10, fig.width=8}
+model2<-"
+model{
+
+#Likelihood
+  for( i in 1:n)
+    {
+      bmi[i]~dnorm(mu[i], tau)
+      mu[i]<-b[1]*black[i]+b[2]*hisp[i]+b[3]*other[i]+b[4]*lths[i]+b[5]*coll[i]+u[cofips[i], 1]*lowinc[i]+u[cofips[i], 2]
+    }
+
+for (j in 1:ncos)
+  {
+    u[j, 1:2] ~ dmnorm(meanu[], prec.Sigma[,])
+  }
+
+#priors
+#NOTICE I removed the separate intercept, b0
+for(j in 1:5) { b[j]~dnorm(0, .01)}
+
+meanu[1]~dnorm(0, .001)
+meanu[2]~dnorm(0, .001)
+prec.Sigma[1:2, 1:2] ~ dwish(Omega[,], 2)  #Wishart is MV form of gamma on precision, it will be square, with nrow = ncol = # of correlated random effects, so if we have another random slope, it would be prec.Sigma[1:3, 1:3] ~ dwish(Omega[,], 3)
+
+Sigma[1:2, 1:2]<-inverse(prec.Sigma[,]) #get the covariance matrix on the variance scale
+rho12<-Sigma[1,2]/ sqrt(Sigma[1,1]* Sigma[2,2])
+
+#Set some initial values for the covariance matrix
+for (j in 1:2){ for (k in 1:2){  Omega[j,k] <-equals(j,k)*.1 } }
+
+tau<-pow(sd, -2)
+sd~dunif(0,100)
+
+}
+"
+
+mod2<-jags.model(file=textConnection(model2), data=dat, n.chains=2,inits =list(init.rng1, init.rng2) )
+
+update(mod2, 10000)
+
+#collect 2000 samples of the parameters
+samps2<-coda.samples(mod2, variable.names=c( "b", "Sigma", "rho12", "sd", "u"), n.iter=5000, n.thin=5)
+effectiveSize(samps2)
+#Numerical summary of each parameter:
+summary(samps2, quantiles =  c(.025, .05, .95, .975))
+
+#traceplot of the markov chains:
+par(mfrow=c(4,2))
+traceplot(samps2[,c("b[1]", "b[2]","b[3]","b[4]", "b[5]", "sd", "Sigma[1,1]", "Sigma[2,1]", "Sigma[1,2]", "Sigma[2,2]", "rho12" )])
+
+
+#autocorrelation plot of each parameter, just from the first chain
+autocorr.plot(samps2[[1]])
+
+#Examine convergence of the Markov chains using the Gelman-Brooks-Rubin diagnostic
+gelman.diag(samps2, multivariate = F)
+
+```
+
+* So, again, our model looks good after burning in for 10,000 iterations
+
+* The densities don't look too out of wack
+
+    + (not multi-modal, the densities from each chain line up well)
+    
+* our traceplots reveal good mixing in the chains 
+
+  
+* Our effective sample sizes are all pretty large,  (i.e. the chains are mixing well and providing independent samples at each iteration)
+    
+* The Gelman-Brooks-Rubin diagnostics show that numerically, there is little to no variation between the chains
+
+##Comparing Models using the Deviance Information Criteria
+In Bayesian models, there isn't a direct equivalent of a likelihood ratio test, and traditionally people use the Deviance Information Criteria (DIC) as a measure of relative model fit [(Spiegelhalter et al, 2002)](http://onlinelibrary.wiley.com/doi/10.1111/1467-9868.00353/full). You can think of this as a Bayesian equivalent of the AIC, if you're used to working with that. It's a measure of model information (deviance), penalized for complexity (# of parameters). 
+
+```{r}
+dic1<-dic.samples(mod, n.iter = 1000, type = "pD")
+dic2<-dic.samples(mod2, n.iter = 1000, type = "pD")
+dic1
+dic2
+```
+
+We see the penalized deviance in model 2 (the random slopes + intercepts model) is only  lower than the model with only random intercepts. While there is no hard and fast rule of thumb for how big a difference there *has* to be, in their orginal paper, they suggest using differences in DIC greater than 7 to indicate that one model is preferred to another.  
+
+
+##Hierarchical GLMM (Logistic Regression Model)
+Here, we fit the hierarchical logistic regression model, here I just fit the random slopes and
+```{r}
+model3<-"
+model{
+
+#Likelihood
+  for( i in 1:n)
+    {
+      obese[i]~dbern(p[i])
+      logit(p[i])<-b[1]*black[i]+b[2]*hisp[i]+b[3]*other[i]+b[4]*lths[i]+b[5]*coll[i]+u[cofips[i], 1]*lowinc[i]+u[cofips[i], 2]
+    }
+
+for (j in 1:ncos)
+  {
+    u[j, 1:2] ~ dmnorm(meanu[], prec.Sigma[,])
+  }
+
+#priors
+#NOTICE I removed the separate intercept, b0
+for(j in 1:5) { b[j]~dnorm(0, .01)}
+
+meanu[1]~dnorm(0, .001)
+meanu[2]~dnorm(0, .001)
+prec.Sigma[1:2, 1:2] ~ dwish(Omega[,], 2)  #Wishart is MV form of gamma on precision, it will be square, with nrow = ncol = # of correlated random effects, so if we have another random slope, it would be prec.Sigma[1:3, 1:3] ~ dwish(Omega[,], 3)
+
+Sigma[1:2, 1:2]<-inverse(prec.Sigma[,]) #get the covariance matrix on the variance scale
+rho12<-Sigma[1,2]/ sqrt(Sigma[1,1]* Sigma[2,2])
+
+#Set some initial values for the covariance matrix
+for (j in 1:2){ for (k in 1:2){  Omega[j,k] <-equals(j,k)*.1 } }
+
+}
+"
+```
+
+And now we fit the model:
+```{r, fig.height=10, fig.width=8}
+load.module("glm")
+mod3<-jags.model(file=textConnection(model3), data=dat, n.chains=2, inits =list(init.rng1, init.rng2) )
+
+#GLMM updating can take longer the LMM's, so make yourself a drink
+update(mod3, 10000)
+
+#collect 2000 samples of the parameters
+samps3<-coda.samples(mod3, variable.names=c( "b", "Sigma", "rho12", "sd", "u"), n.iter=5000, n.thin=5)
+effectiveSize(samps3)
+#Numerical summary of each parameter:
+summary(samps3, quantiles =  c(.025, .05, .95, .975))
+
+#traceplot of the markov chains:
+par(mfrow=c(4,2))
+traceplot(samps2[,c("b[1]", "b[2]","b[3]","b[4]", "b[5]", "sd", "Sigma[1,1]", "Sigma[2,1]", "Sigma[1,2]", "Sigma[2,2]", "rho12" )])
+
+#autocorrelation plot of each parameter, just from the first chain
+autocorr.plot(samps3[[1]])
+
+#Examine convergence of the Markov chains using the Gelman-Brooks-Rubin diagnostic
+gelman.diag(samps3, multivariate = F)
+
+```
+
+The model looks converged, other diagnostics are all good.
+The dic is:
+
+```{r}
+dic.samples(mod3, n.iter=1000)
+```

@@ -1,0 +1,276 @@
+---
+title: "Measurement Error Models"
+author: "coreysparks"
+date: "November 5, 2014"
+output: html_document
+---
+
+In this example, I will illustrate the use of the Berkson measurement error model on data from the BRFSS from Texas. 
+
+Traditionally, we only assume error in our outcome variables: e.g.
+$y_i ~ \alpha + \beta *x_i + e_i$
+
+But often, both y and x have errors in their measurement. This leads to a joint model for both x and y. Two basic forms of this include the Berkson and classical error models.
+
+The Berkson model represents the situation where the observed predictors are less variable than their actual underlying true covariates, such as if you have a covariate that is recorded in intervals (income quartiles), vs the true continuous predictor (income in dollars). The former is less variable that the latter. 
+
+The classical model uses a latent variable specificaiton for the true underlying covariate. This is equivalent to stating that a variable *x* is an imperfect measure of the **true** covariate *z*.
+
+We will use the BRFSS data for the state of Texas for our example, and use BMI as a continous outcome, and obesity status outcome (BMI >= 30) as a dichotomous outcome.
+To examine the Berkson model, I will use a categorized measure of poverty at the county level.
+To examine the classical error model, I will use the ACS estimates of the errors in the poverty rate estimates directly. 
+
+First we load our data and recode some variables:
+```{r}
+library(rjags)
+library(dplyr)
+library(car)
+library(lme4)
+load("~/Google Drive/dem7903_App_Hier/data/brfss_11.Rdata")
+nams<-names(brfss_11)
+newnames<-gsub("_", "", nams)
+names(brfss_11)<-tolower(newnames)
+brfss_11$statefip<-sprintf("%02d", brfss_11$state )
+brfss_11$cofip<-sprintf("%03d", brfss_11$cnty )
+brfss_11$cofips<-paste(brfss_11$statefip, brfss_11$cofip, sep="")
+brfss_11$obese<-ifelse(brfss_11$bmi5/100 >=30, 1,0)
+brfss_11$black<-recode(brfss_11$racegr2, recodes="2=1; 9=NA; else=0", as.factor.result=F)
+brfss_11$white<-recode(brfss_11$racegr2, recodes="1=1; 9=NA; else=0", as.factor.result=F)
+brfss_11$other<-recode(brfss_11$racegr2, recodes="3:4=1; 9=NA; else=0", as.factor.result=F)
+brfss_11$hispanic<-recode(brfss_11$racegr2, recodes="5=1; 9=NA; else=0", as.factor.result=F)
+#education level
+brfss_11$lths<-recode(brfss_11$educa, recodes="1:3=1;9=NA; else=0", as.factor.result=F)
+brfss_11$coll<-recode(brfss_11$educa, recodes="5:6=1;9=NA; else=0", as.factor.result=F)
+brfss_11$agez<-scale(brfss_11$age, center=T, scale=T)
+brfss_11$bmiz<-scale(brfss_11$bmi5/100, center=T, scale=T)
+brfss_11$lowinc<-recode(brfss_11$incomg, recodes = "1:3=1; 4:5=0; else=NA")
+
+
+#Read in ACS poverty rates at the county level
+#poverty is measured with error, and we know the error in this case
+acsecon<-read.csv("~/Google Drive/dem7903_App_Hier/data/aff_download/ACS_10_5YR_DP03_with_ann.csv")
+acsecon$povrate<-acsecon[, "HC03_VC156"]
+acsecon$poverr<-acsecon[, "HC04_VC156"]
+
+#the next way I do it is the classical way, where you have a predictor that is given in ranges, not actual values.
+#So I make grouped poverty rates using quantiles
+quantile(acsecon$povrate, p=c(0, .25, .5, .75, 1))
+acsecon$pov_cut<-recode(acsecon$povrate, recodes = "0:7.4=1; 7.41:10.4=2; 10.41:14.1=3; 14.11:44.9=4")
+
+acsecon$cofips<-substr(acsecon$GEO.id, 10,14)
+acsecon<-acsecon[, c("cofips", "povrate", "poverr", "pov_cut")]
+head(acsecon)
+#and merge the data back to the brfss data
+merged<-merge(x=brfss_11, y=acsecon, by.x="cofips", by.y="cofips", all.x=T)
+
+
+```
+
+Next, I subset the data to select the observations from Texas.
+```{r}
+tx<-subset(merged, subset = state=="48"& is.na(bmiz)==F& is.na(black)==F& is.na(lths)==F& is.na(lowinc)==F)
+nwncos<-table(tx$cofips)
+nwncos #Number of people within counties
+tx$conum<-rep(1:length(unique(tx$cofips)), nwncos[nwncos!=0])
+length(unique(tx$conum)) #Number of counties
+```
+
+
+
+## Model specifications
+
+The first model will ignore the errors in the predictor.
+```{r}
+model1<-"
+model{
+
+  for (i in 1:n){
+      bmi[i]~dnorm(mu[i], tau)
+      mu[i]<-b[1]*black[i]+b[2]*hisp[i]+b[3]*other[i]+b[4]*lths[i]+b[5]*coll[i]+u[cofips[i]]
+  }
+for (j in 1:ncos)
+  {
+    u[j]~dnorm(muu[j], tau_u)
+    muu[j]<-u0+gam*(pov[j]-mean(pov[]))
+  }
+#priors
+u0~dnorm(0, .01)
+for(j in 1:5) { b[j]~dnorm(0, .01)}
+gam~dnorm(0, .01)
+tau<-pow(sd, -2)
+sd~dunif(0,100)
+
+tau_u<-pow(sd_u, -2)
+sd_u~dunif(0,100)
+
+}
+
+"
+
+#get initial values from a linear model
+b<-as.numeric(coef(lm(bmiz~black+hispanic+other+lths+coll+scale(povrate, center=T), tx)))
+b
+
+#make the data
+dat<-list(bmi=as.numeric(tx$bmiz), obese=tx$obese, black=tx$black, hisp=tx$hispanic, other=tx$other, lths=tx$lths, coll=tx$coll, age=as.numeric(tx$agez), lowinc=tx$lowinc, pov=as.numeric(tapply(tx$povrate, tx$cofips, mean)), n=length(tx$bmiz),cofips=tx$conum, ncos=length(unique(tx$cofips)))
+
+init.rng1<-list(".RNG.seed" = 1234, ".RNG.name" = "base::Mersenne-Twister", u0=b[1], b=b[2:6], gam=b[7])
+init.rng2<-list(".RNG.seed" = 5678, ".RNG.name" = "base::Mersenne-Twister", u0=b[1], b=b[2:6], gam=b[7])
+
+#start the model
+mod1<-jags.model(file=textConnection(model1), data=dat,inits =list(init.rng1, init.rng2) , n.chains=2)
+
+#next, we update the model, this is the "burn in" period
+update(mod1, 20000)
+
+#sample samples from each chain, thinning every 25th iteration
+samps<-coda.samples(mod1, variable.names=c("u0", "gam", "b", "sd", "sd_u"), n.iter=2000, n.thin=25)
+effectiveSize(samps)
+gelman.diag(samps, multivariate = F)
+
+#Numerical summary of each parameter, here I also include the 90% credible interval:
+summary(samps, quantiles =  c(.025, .975))
+
+dic.samples(mod1, n.iter = 1000, type = "pD")
+
+```
+
+
+## Berkson Model
+Here, I have error in the poverty rate because the rate has been measured in an interval fashion, instead of a continuous fashion. One thing you may encounter in this type of situation is where you have a calibration estimate for the intervaled data, such as a regression of the true value on the intervaled value, so you know the parameters from such an equation. I estimate these calibration values below using a linear model of the intervaled estimate on the true estimate.
+
+
+```{r}
+model2<-"
+model{
+
+  for (i in 1:n){
+      bmi[i]~dnorm(mu[i], tau)
+      mu[i]<-b[1]*black[i]+b[2]*hisp[i]+b[3]*other[i]+b[4]*lths[i]+b[5]*coll[i]+u[cofips[i]]
+      
+  }
+for (j in 1:ncos)
+  {
+     u[j]~dnorm(muu[j], tau_u)
+    muu[j]<-u0+gam*(z[j])
+    z[j]~dnorm(muz[j], tauz)
+    muz[j]<-alphaz+bz*povcut[j]
+  }
+#priors
+for(j in 1:5) { b[j]~dnorm(0, .01)}
+gam~dnorm(0,.01)
+u0~dnorm(0, .0001)
+
+tau<-pow(sd, -2)
+sd~dunif(0,100)
+
+tau_u<-pow(sd_u, -2)
+sd_u~dunif(0,100)
+
+}
+"
+#get calibration values for error model. 
+summary(lm(povrate~pov_cut, tx))
+
+#Make the data
+dat<-list(bmi=as.numeric(tx$bmiz), obese=tx$obese, black=tx$black, hisp=tx$hispanic, other=tx$other, lths=tx$lths, coll=tx$coll, age=as.numeric(tx$agez), lowinc=tx$lowinc, povcut=tapply(tx$pov_cut, tx$cofips, median ), n=length(tx$bmiz),cofips=tx$conum, ncos=length(unique(tx$cofips)), alphaz=3.367, bz=3.094, tauz=1/(.9128^2))
+
+#get initial values
+
+b<-as.numeric(fixef(lmer(bmiz~black+hispanic+other+lths+coll+pov_cut+(1|cofips), tx)))
+b
+VarCorr(lmer(bmiz~black+hispanic+other+lths+coll+pov_cut+(1|cofips), tx))
+
+#initialize
+init.rng1<-list( b=b[2:6], u0=b[1], gam=b[7], sd=1.001549, sd_u=.046201)
+init.rng2<-list( b=b[2:6], u0=b[1], gam=b[7], sd=1.001549, sd_u=.046201)
+
+#Start the model
+mod2<-jags.model(file=textConnection(model2), data=dat,inits =list(init.rng1, init.rng2) , n.chains=2)
+
+#next, we update the model, this is the "burn in" period
+update(mod2, 30000)
+
+#sample samples from each chain, thinning every 25th iteration
+samps2<-coda.samples(mod2, variable.names=c("u0", "b","gam", "sd", "sd_u", "z", "sd", "sd_u"), n.iter=2000, n.thin=25)
+effectiveSize(samps2)
+gelman.diag(samps2, multivariate = F)
+
+#Numerical summary of each parameter, here I also include the 90% credible interval:
+summary(samps2, quantiles =  c(.025, .975))
+
+dic.samples(mod2, n.iter = 1000, type = "pD")
+
+```
+
+
+
+
+## classical Model
+Here the poverty rate is treated as a latent variable with known error (from the ACS margin of error). Alternatively, you could put a prior on the latent variable variance. 
+
+```{r}
+model3<-"
+model{
+
+  for (i in 1:n){
+      bmi[i]~dnorm(mu[i], tau)
+      mu[i]<-b[1]*black[i]+b[2]*hisp[i]+b[3]*other[i]+b[4]*lths[i]+b[5]*coll[i]+u[cofips[i]]
+          
+  }
+
+for (j in 1:ncos)
+  {
+    u[j]~dnorm(muu[j], tau_u)
+    muu[j]<-u0+gam*(povtrue[j]-mean(povtrue[]))
+    povrate[j]~dnorm(povtrue[j],taupov[j] )
+    povtrue[j]~dnorm(0, taup)T(0,100)
+    taupov[j]<-pow(poverr[j],-2)
+  }
+#priors
+u0~dnorm(0, .01)
+for(j in 1:5) { b[j]~dnorm(0, .01)}
+gam~dnorm(0, .01)
+
+tau<-pow(sd, -2)
+sd~dunif(0,100)
+
+tau_u<-pow(sd_u, -2)
+sd_u~dunif(0,100)
+
+taup~dgamma(.01, .01)
+}
+"
+
+dat<-list(bmi=as.numeric(tx$bmiz), obese=tx$obese, black=tx$black, hisp=tx$hispanic, other=tx$other, lths=tx$lths, coll=tx$coll, age=as.numeric(tx$agez), lowinc=tx$lowinc, povrate=as.numeric(tapply(tx$povrate, tx$cofips, mean)), poverr=tapply(tx$poverr/1.645, tx$cofips, mean), n=length(tx$bmiz),cofips=tx$conum, ncos=length(unique(tx$cofips)))
+
+#get initial values
+
+b<-as.numeric(fixef(lmer(bmiz~black+hispanic+other+lths+coll+scale(povrate, center=T)+(1|cofips), tx)))
+b
+VarCorr(lmer(bmiz~black+hispanic+other+lths+coll+scale(povrate, center=T)+(1|cofips), tx))
+
+
+init.rng1<-list( u0=b[1], b=b[2:6], gam=b[7])
+init.rng2<-list( u0=b[1], b=b[2:6], gam=b[7])
+mod3<-jags.model(file=textConnection(model3), data=dat,inits =list(init.rng1, init.rng2) , n.chains=2)
+
+#next, we update the model, this is the "burn in" period
+update(mod3, 20000)
+
+#sample 1000 samples from each chain, thinning every 25th iteration
+samps3<-coda.samples(mod3, variable.names=c("u0", "b","gam", "sd", "sd_u", "povtrue", "povrate"), n.iter=2000, n.thin=25)
+effectiveSize(samps3)
+gelman.diag(samps3, multivariate = F)
+
+#Numerical summary of each parameter:
+summary(samps3, quantiles =  c(.025, .975))
+dat$povrate
+dat$poverr
+
+dic.samples(mod3, n.iter = 1000, type = "pD")
+
+```
+
+
+In this case, the first model, without any measurement error fits best, followed by the berkson model, then the classical model, using the DIC.

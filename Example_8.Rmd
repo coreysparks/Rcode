@@ -1,0 +1,209 @@
+---
+title: "Longitudinal Models using JAGS"
+author: "coreysparks"
+date: "October 22, 2014"
+output: html_document
+---
+
+In this example, we will use Bayesian hierarchical models to do some longitudinal modeling of data from the [ECLS-K ](http://nces.ed.gov/ecls/kinderdatainformation.asp). Specifically, we will model changes in a student's standardized math score from kindergarten to 8th grade. We will use JAGS to illustrate the use of random slope models /growth curve models for individual change
+
+First we load our data
+```{r}
+load("~/Google Drive/dem7903_App_Hier/data/eclsk.Rdata")
+names(eclsk)<-tolower(names(eclsk))
+library (car)
+library(rjags)
+#get out only the variables I'm going to use for this example
+myvars<-c( "childid","gender", "race", "r1_kage","r2_kage", "r4age", "r5age", "r6age", "r7age","c1r4mtsc", "c4r4mtsc", "c5r4mtsc", "c6r4mtsc", "c7r4mtsc", "w1povrty","w1povrty","w3povrty", "w5povrty", "w8povrty","wkmomed", "s2_id", "p2fsstat","p5fsstat","p6fsstat","p7fsstat", "cregion")
+eclsk<-eclsk[,myvars]
+
+#recode outcome, math score at each of the 4 waves
+eclsk$math1<-ifelse(eclsk$c1r4mtsc==-9,NA, eclsk$c1r4mtsc)
+eclsk$math2<-ifelse(eclsk$c4r4mtsc==-9,NA, eclsk$c4r4mtsc)
+eclsk$math3<-ifelse(eclsk$c5r4mtsc==-9,NA, eclsk$c5r4mtsc)
+eclsk$math4<-ifelse(eclsk$c6r4mtsc==-9,NA, eclsk$c6r4mtsc)
+eclsk$math5<-ifelse(eclsk$c7r4mtsc==-9,NA, eclsk$c7r4mtsc)
+
+eclsk$age1<-ifelse(eclsk$r1_kage==-9, NA, eclsk$r1_kage/12)
+eclsk$age2<-ifelse(eclsk$r4age==-9, NA, eclsk$r4age/12)
+#for the later waves, the NCES group the ages into ranges of months, so 1= <105 months, 2=105 to 108 months. So, I fix the age at the midpoint of the interval they give, and make it into years by dividing by 12
+eclsk$age3<-recode(eclsk$r5age,recodes="1=105; 2=107; 3=109; 4=112; 5=115; 6=117; -9=NA")/12
+eclsk$age4<-recode(eclsk$r6age,recodes="1=118; 2=129; 3=135; 4=141; 5=155; -9=NA")/12
+eclsk$age5<-recode(eclsk$r7age,recodes="1=155; 2=166; 3=172; 4=178; 5=192; -9=NA")/12
+
+eclsk$pov1<-ifelse(eclsk$w1povrty==1,1,0)
+eclsk$pov2<-ifelse(eclsk$w1povrty==1,1,0)
+eclsk$pov3<-ifelse(eclsk$w3povrty==1,1,0)
+eclsk$pov4<-ifelse(eclsk$w5povrty==1,1,0)
+eclsk$pov5<-ifelse(eclsk$w5povrty==1,1,0)
+
+#Recode race with white, non Hispanic as reference using dummy vars
+eclsk$hisp<-recode (eclsk$race, recodes="3:4=1;-9=NA; else=0")
+eclsk$black<-recode (eclsk$race, recodes="2=1;-9=NA; else=0")
+eclsk$asian<-recode (eclsk$race, recodes="5=1;-9=NA; else=0")
+eclsk$nahn<-recode (eclsk$race, recodes="6:7=1;-9=NA; else=0")
+eclsk$other<-recode (eclsk$race, recodes="8=1;-9=NA; else=0")
+eclsk$male<-recode(eclsk$gender, recodes="1=1; 2=0; -9=NA")
+eclsk$mlths<-recode(eclsk$wkmomed, recodes = "1:2=1; 3:9=0; else = NA")
+eclsk$mgths<-recode(eclsk$wkmomed, recodes = "1:3=0; 4:9=1; else =NA") 
+
+```
+
+To analyze data longitudinally, we need to reshape the data from the current "wide" format (repeated measures in columns) to a "long" format (repeated observations in rows). The `reshape()` function allows us to do this easily. It allows us to specify our repeated measures, time varying covariates as well as time-constant covariates.
+
+This takes a long time to run with the full sample, so I just subset to children from the south census region (cregion==3)
+```{r}
+eclsk<-subset(eclsk, cregion==3)
+e.long<-reshape(eclsk, idvar="childid",  varying=list(math = c("math1", "math2", "math3", "math4","math5"),
+                                         age = c("age1", "age2", "age3", "age4", "age5"),
+                                         pov= c("pov1", "pov2", "pov3", "pov4", "pov5")),
+                                         times=1:5,direction="long",  
+                                          drop = names(eclsk)[c(4:19,22:25) ],)
+e.long<-e.long[order(e.long$childid, e.long$time),]
+head(e.long, n=20)
+
+```
+
+###Models
+The first model is a simple random intercept model for each child's mean for the math score, with a population trajectory for age, not child specific
+
+```{r}
+model1<-"
+model{
+
+#Likelihood
+  for( i in 1:n)
+    {
+     math[i]~dnorm(mu[i], tau)
+      mu[i]<-b[1]+b[2]*black[i]+b[3]*hisp[i]+b[4]*asian[i]+b[5]*other[i]+b[6]*lths[i]+b[7]*gths[i]+b[8]*pov[i]+b[9]*age[i]+u[childnum[i]]
+    }
+
+#priors
+#Prior for random intercept
+for (j in 1:nkids)
+  {
+    u[j] ~ dnorm(0, tauu)
+  }
+
+
+#regression effects, MVN prior
+b[1:9]~dmnorm(meanb[], prec.beta[,])
+for(j in 1:9){
+meanb[j]~dnorm(0, .0001)
+}
+prec.beta[1:9,1:9]~dwish(Obeta[,], 9)
+for(j in 1:9){ for(k in 1:9){ Obeta[j,k] <- equals(j,k)*.1 } }
+
+
+tau<-pow(sd, -2)
+sd~dunif(0,100)
+tauu<-pow(sdu, -2)
+sdu~dunif(0,100)
+
+}
+"
+e.long<-subset(e.long, subset = is.na(math1)==F&is.na(black)==F&is.na(male)==F&is.na(pov1)==F&is.na(mlths)==F&is.na(age1)==F)
+nkids<-table(e.long$childid)
+head(nkids) #Number of people within counties
+e.long$childnum<-rep(1:length(unique(e.long$childid)), nkids)
+dat<-list(math=as.numeric(scale(e.long$math1, center=T, scale=T)), sex=e.long$male, black=e.long$black, hisp=e.long$hisp, other=e.long$other, asian=e.long$asian,pov=e.long$pov1,lths=e.long$mlths,gths=e.long$mgths,age=e.long$age1, childnum=e.long$childnum,n=length(e.long$math1), nkids=length(unique(e.long$childid)))
+lapply(dat , summary)
+
+
+#Set some initial values
+init.rng1<-list(".RNG.seed" = 1234, ".RNG.name" = "base::Mersenne-Twister", sd=.1, sdu=.1)
+init.rng2<-list(".RNG.seed" = 5678, ".RNG.name" = "base::Mersenne-Twister", sd=.5, sdu=.5)
+
+#Initialize the model
+mod1<-jags.model(file=textConnection(model1), data=dat, n.chains=2,inits =list(init.rng1, init.rng2) )
+
+#burn in 
+update(mod1, 5000)
+
+#collect  samples of the parameters
+samps1<-coda.samples(mod1, variable.names=c( "b", "sd", "sdu"), n.iter=5000, n.thin=1)
+
+#Effective sample size for each parameter
+effectiveSize(samps1)
+#Numerical summary of each parameter:
+summary(samps1, quantiles =  c(.025, .05, .95, .975))
+
+#GBR diagnostic
+gelman.diag(samps1,  multivariate = F)
+
+
+#DIC
+dic.samples(mod1, n.iter = 1000,type = "pD")
+```
+
+
+The second model is for a child-specific linear trajectory (random slope) and mean (random intercept)
+```{r}
+
+model2<-"
+model{
+
+#Likelihood
+  for( i in 1:n)
+    {
+     math[i]~dnorm(mu[i], tau)
+      mu[i]<-b[1]*black[i]+b[2]*hisp[i]+b[3]*asian[i]+b[4]*other[i]+b[5]*lths[i]+b[6]*gths[i]+b[7]*pov[i]+u[childnum[i],1]*age[i]+u[childnum[i],2]
+    }
+
+#priors
+#MVN Prior for random intercepts and slopes
+for (j in 1:nkids)
+  {
+    u[j, 1:2] ~ dmnorm(meanu[], prec.Sigma[,])
+  }
+meanu[1]~dnorm(0, .001)
+meanu[2]~dnorm(0, .001)
+prec.Sigma[1:2, 1:2] ~ dwish(Omega[,], 2)  
+Sigma[1:2, 1:2]<-inverse(prec.Sigma[,]) 
+rho12<-Sigma[1,2]/ sqrt(Sigma[1,1]* Sigma[2,2])
+#Set some initial values for the covariance matrix
+for (j in 1:2){ for (k in 1:2){  Omega[j,k] <-equals(j,k)*.1 } }
+
+#regression effects, MVN prior
+b[1:7]~dmnorm(meanb[], prec.beta[,])
+for(j in 1:7){
+meanb[j]~dnorm(0, .0001)
+}
+prec.beta[1:7,1:7]~dwish(Obeta[,], 7)
+for(j in 1:7){ for(k in 1:7){ Obeta[j,k] <- equals(j,k)*.1 } }
+
+#prior on residual precision
+tau<-pow(sd, -2)
+sd~dunif(0,100)
+
+
+}
+"
+
+
+#Set some initial values
+init.rng1<-list(".RNG.seed" = 1234, ".RNG.name" = "base::Mersenne-Twister", sd=.1)
+init.rng2<-list(".RNG.seed" = 5678, ".RNG.name" = "base::Mersenne-Twister", sd=.5)
+
+#initialize the model
+mod2<-jags.model(file=textConnection(model2), data=dat, n.chains=2,inits =list(init.rng1, init.rng2) )
+
+#burn in 
+update(mod2, 5000)
+
+#collect samples of the parameters
+samps2<-coda.samples(mod2, variable.names=c( "b", "sd", "Sigma", "rho12"), n.iter=5000, n.thin=1)
+
+#effective sample size for each parameter
+effectiveSize(samps2)
+
+#Numerical summary of each parameter:
+summary(samps2, quantiles =  c(.025, .05, .95, .975))
+
+#GBR 
+gelman.diag(samps2,  multivariate = F)
+dic.samples(mod2, n.iter = 1000,type = "pD")
+
+ ```
+
+

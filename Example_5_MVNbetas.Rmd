@@ -1,0 +1,233 @@
+---
+title: "Bayesian Data Analysis 1"
+output: html_document
+---
+
+This example will go through the basics of using JAGS (https://sourceforge.net/projects/mcmc-jags/files/JAGS/3.x/) by way of the `rjags` library, for estimation of simple linear and generalized linear models. You must install both JAGS and rjags for this to work.
+
+We will use the BRFSS data for the state of Texas for our example, and use BMI as a continous outcome, and obesity status outcome (BMI >= 30) as a dichotomous outcome.
+
+First we load our data and recode some variables:
+```{r}
+library(rjags)
+library(dplyr)
+library(car)
+load("~/Google Drive/dem7903_App_Hier/data/brfss_11.Rdata")
+nams<-names(brfss_11)
+newnames<-gsub("_", "", nams)
+names(brfss_11)<-tolower(newnames)
+brfss_11$statefip<-sprintf("%02d", brfss_11$state )
+brfss_11$cofip<-sprintf("%03d", brfss_11$cnty )
+brfss_11$cofips<-paste(brfss_11$statefip, brfss_11$cofip, sep="")
+brfss_11$obese<-ifelse(brfss_11$bmi5/100 >=30, 1,0)
+brfss_11$black<-recode(brfss_11$racegr2, recodes="2=1; 9=NA; else=0", as.factor.result=F)
+brfss_11$white<-recode(brfss_11$racegr2, recodes="1=1; 9=NA; else=0", as.factor.result=F)
+brfss_11$other<-recode(brfss_11$racegr2, recodes="3:4=1; 9=NA; else=0", as.factor.result=F)
+brfss_11$hispanic<-recode(brfss_11$racegr2, recodes="5=1; 9=NA; else=0", as.factor.result=F)
+#education level
+brfss_11$lths<-recode(brfss_11$educa, recodes="1:3=1;9=NA; else=0", as.factor.result=F)
+brfss_11$coll<-recode(brfss_11$educa, recodes="5:6=1;9=NA; else=0", as.factor.result=F)
+brfss_11$agez<-scale(brfss_11$age, center=T, scale=T)
+```
+
+Next, I use the `filter` function from the dplyr library to select the observations from Texas.
+```{r}
+brf<-tbl_df(brfss_11)
+tx<-as.data.frame(filter(brf, state=="48", is.na(obese)==F, is.na(black)==F, is.na(lths)==F))
+nwncos<-table(tx$cofips)
+tx$conum<-rep(1:length(unique(tx$cofips)), nwncos[nwncos!=0])
+```
+
+## Linear Regression Example
+Here is a simple linear regression model for bmi using a single predictor variable
+There a loads of ways to do this, but I like doing it this way.
+I write my code as a big string, then feed it to jags.
+
+```{r}
+#Here is a simple linear regression model for bmi with 1 predictor
+model1<-"
+model{
+
+#Likelihood
+  for( i in 1:n)
+    {
+      bmi[i]~dnorm(mu[i], tau)
+     # mu[i]<-b0+b1*black[i]+b2*lths[i]+b3*age[i]
+    mu[i]<-b[1]+b[2]*black[i]+b[3]*lths[i]+b[4]*age[i]
+    }
+
+#priors
+#b0~dnorm(0,.01)
+#b1~dnorm(0,.01)
+#b2~dnorm(0,.01)
+#b3~dnorm(0,.01)
+
+
+b[1:4]~dmnorm(meanb[], prec.sigma[,])
+for(j in 1:4){
+meanb[j]~dnorm(0, .0001)
+}
+
+prec.sigma[1:4,1:4]~dwish(Omega[,], 4)
+
+for(j in 1:4){ for(k in 1:4){ Omega[j,k] <- equals(j,k)*.1 } }
+
+
+
+tau<-pow(sd, -2)
+sd~dunif(0,100)
+#bayesian p-values for the regression coefficient using the step() function
+#step() is an indicator fuction an evaluates to 1 if the argument is greater than 0, 0 otherwise
+
+}
+"
+```
+
+Next, we have to make a data list for jags, which contains anything we are reading into jags as data.
+```{r}
+dat<-list(bmi=tx$bmi5/100, obese=tx$obese, black=tx$black, hisp=tx$hispanic, lths=tx$lths, coll=tx$coll, age=tx$agez, n=length(tx$obese),cofips=tx$conum, ncos=length(unique(tx$cofips)))
+
+#quick summary
+lapply(dat, summary)
+```
+
+To use jags, we have to create a jags.model object, which contains the text representation of our model, our data, and some other parameters for the MCMC run
+
+```{r}
+mod<-jags.model(file=textConnection(model1), data=dat, n.chains=2, n.adapt=1000)
+
+#next, we update the model, this is the "burn in" period
+update(mod, 1000)
+```
+
+If we only want to see summaries of our parameters, then we can use jags.samples()
+```{r}
+jags.samples(model= mod,variable.names=c("b0", "b1", "p1", "p2", "sd"), n.iter=1000 )
+```
+
+We can check how we did in comparison to a model fit via least squares in lm():
+```{r}
+summary(lm(dat$bmi~dat$black, family=gaussian))
+```
+The parameters all have extremely similar estimates, and the "p values" also are in agreement
+
+Next, we examine a few other elements of the model, including the posterior densities of the parameters, and
+First, we must collect some samples of each parameter using the `coda.samples()` function.
+```{r}
+#collect 1000 samples of the betas and the residual sd
+samps<-coda.samples(mod, variable.names=c("b", "sd"), n.iter=1000)
+
+#Numerical summary of each parameter:
+summary(samps)
+
+#Plot a density of each parameter:
+densityplot(samps)
+
+#traceplot of the markov chains:
+traceplot(samps)
+
+#autocorrelation plot of each parameter:
+autocorr.plot(samps)
+autocorr.diag(samps)
+
+#Examine convergence of the Markov chains using the Gelman-Brooks-Rubin diagnostic
+gelman.plot(samps)
+gelman.diag(samps)
+```
+
+* So our model looks good. 
+
+* The densities don't look too out of wack
+
+    + (not multi-modal, the densities from each chain line up well)
+    
+* our traceplots reveal good mixing in the chains 
+
+    + (vs divergence) 
+    
+* our autocorrelation statistics look like there is minimal autocorrelation in the Markov Chains
+
+    + (i.e. they are mixing well and providing independent samples at each iteration)
+    
+* The Gelman-Brooks-Rubin diagnostics show that numerically, there is little to no variation between the chains
+
+    + The chains have converged
+    
+  
+## Logistic Regression Example
+Next, we consider a similar simple logistic regression model:
+```{r}
+model2<-"
+model{
+
+#Likelihood
+  for( i in 1:n)
+    {
+      obese[i]~dbern(p[i])
+      logit(p[i])<-b0+b1*black[i]
+    }
+
+#priors
+b0~dnorm(0,.01)
+b1~dnorm(0,.01)
+p1<-step(b1-1)
+p2<-1-step(b1-1)
+
+}
+"
+
+load.module("glm")
+mod2<-jags.model(file=textConnection(model2), data=dat, n.chains=2, n.adapt=1000)
+
+update(mod2, 1000)
+jags.samples(mod2,variable.names=c("b0", "b1", "p1", "p2"), n.iter=1000 )
+```
+
+Compare to a logistic regression from a glm() fit
+```{r}
+summary(glm(dat$obese~dat$black, family=binomial))
+```
+
+Again, we see correspondence. Now we can again look at the posterior densities and other aspects of our models:
+```{r}
+#collect 1000 samples of the betas and the residual sd
+samps2<-coda.samples(mod2, variable.names=c("b0", "b1"), n.iter=1000)
+
+#Numerical summary of each parameter:
+summary(samps2)
+
+#Plot a density of each parameter:
+densityplot(samps2)
+
+#traceplot of the markov chains:
+traceplot(samps2)
+
+#autocorrelation plot of each parameter:
+autocorr.plot(samps2)
+autocorr.diag(samps2)
+
+#Examine convergence of the Markov chains using the Gelman-Brooks-Rubin diagnostic
+gelman.plot(samps2)
+gelman.diag(samps2)
+```
+
+* So, again, our model looks good. 
+
+* The densities don't look too out of wack
+
+    + (not multi-modal, the densities from each chain line up well)
+    
+* our traceplots reveal good mixing in the chains 
+
+    + (vs divergence) 
+    
+* our autocorrelation statistics look like there is minimal autocorrelation in the Markov Chains
+
+    + (i.e. they are mixing well and providing independent samples at each iteration)
+    
+* The Gelman-Brooks-Rubin diagnostics show that numerically, there is little to no variation between the chains
+
+    + The b1 parameter shows a point estimate slightly above 1, but this is not that concerning, larger values over 1.1 would indicate that we need to run the model longer.
+
+
+

@@ -1,0 +1,133 @@
+---
+title: 'Week 3: Basic Hierarchical Models - Random Intercepts and Slopes'
+output:
+  html_document:
+    highlight: tango
+---
+
+First we load our data
+```{r}
+load("C:/Users/ozd504//Google Drive/dem7903_App_Hier/data/eclsk.Rdata")
+names(eclsk)<-tolower(names(eclsk))
+library (car)
+library(lme4)
+library(arm)
+#get out only the variables I'm going to use for this example
+
+myvars<-c("gender", "kurban_r", "race", "w1povrty", "wkmomed","p2homecm", "p2cover", "p2curmar", "p2sprhhm", "c2r4mtsc", "p2dentis", "s2_id", "s2kpupri","s2kminor" )
+#subset the data
+eclsk.sub<-eclsk[,myvars]
+rm(eclsk); gc()
+```
+
+
+Next, I do some recoding of variables using a mixture of the ` ifelse()` function and the `recode ()` function.
+```{r}
+#recode our outcomes, the  first is the child's math standardized test score  in Kindergarten
+eclsk.sub$math<-ifelse(eclsk.sub$c2r4mtsc<0, NA, eclsk.sub$c2r4mtsc)
+
+#the second outcome is whether each child has seen a dentist within the last year
+eclsk.sub$dentist<-recode(eclsk.sub$p2dentis, recodes = "2:3=1; -1:-9= NA; else=0")
+
+#First we recode some Child characteristics
+#Child's sex: recode as male =1
+eclsk.sub$male<-recode(eclsk.sub$gender, recodes="1=1; 2=0; -9=NA")
+
+#Recode race with white, non Hispanic as reference using dummy vars
+eclsk.sub$hisp<-recode (eclsk.sub$race, recodes="3:4=1;-9=NA; else=0")
+eclsk.sub$black<-recode (eclsk.sub$race, recodes="2=1;-9=NA; else=0")
+eclsk.sub$asian<-recode (eclsk.sub$race, recodes="5=1;-9=NA; else=0")
+eclsk.sub$nahn<-recode (eclsk.sub$race, recodes="6:7=1;-9=NA; else=0")
+eclsk.sub$other<-recode (eclsk.sub$race, recodes="8=1;-9=NA; else=0")
+
+#insurance coverage
+eclsk.sub$covered<-recode(eclsk.sub$p2cover, recodes="1=1; -1:-9=NA; else=0")
+
+#Then we recode some parent/mother characteristics
+#Mother's education, recode as 2 dummys with HS = reference
+eclsk.sub$mlths<-recode(eclsk.sub$wkmomed, recodes = "1:2=1; 3:9=0; else = NA")
+eclsk.sub$mgths<-recode(eclsk.sub$wkmomed, recodes = "1:3=0; 4:9=1; else =NA") 
+
+#marital status, recode as 2 dummys, ref= married
+eclsk.sub$single<-recode(eclsk.sub$p2curmar, recodes="5=1; -7:-9=NA; else=0")
+eclsk.sub$notmar<-recode(eclsk.sub$p2curmar, recodes="2:4=1; -7:-9=NA; else=0")
+
+
+#Then we do some household level variables
+#Urban residence = 1
+eclsk.sub$urban<-recode(eclsk.sub$kurban_r, recodes = "1:2=1; 3=0")
+
+#poverty level in poverty = 1
+eclsk.sub$pov<-recode(eclsk.sub$w1povrty , recodes ="1=1; 2=0")
+
+#Household size
+eclsk.sub$hhsize<-eclsk.sub$p2sprhhm
+
+#school is private
+eclsk.sub$privsch<-ifelse(eclsk.sub$s2kpupri==1, 1, 0)
+
+#school has >50% minority student body
+eclsk.sub$minorsch<-recode(eclsk.sub$s2kminor, recodes="1:3=0; 4:5=1; else=NA" )
+```
+
+```{r}
+#Show the first few lines of the data
+head(eclsk.sub)
+```
+
+
+The First model will fit a model that considers the individual and family level variables 
+and a random intercept only
+```{r}
+fit1<-lmer(math~male+hisp+black+asian+nahn+other+mlths+mgths+single+notmar+urban+pov+hhsize+(1|s2_id), data=eclsk.sub, REML=T)
+
+display(fit1)
+```
+
+
+The second model considers both random intercepts and random slopes, in this case, i'm only considering a random slope for poverty status
+
+```{r}
+fit2<-lmer(math~male+hisp+black+asian+nahn+other+mlths+mgths+single+notmar+urban+pov+hhsize+(1+pov|s2_id), data = eclsk.sub, REML = T)
+display(fit2)
+
+anova (fit1, fit2)
+```
+In this case, fitting the random slope for poverty isn't adding anything to the model
+I interpret this as kids living in housholds below the poverty line face a systematic disadvantage, regardless of school
+
+Now, let's plot the regression lines for each school!
+```{r}
+#get the random effects
+rancoefs2<-ranef(fit2)
+
+#here are the first 10 schools random effects
+head(rancoefs2$s2_id, n=10)
+
+#Histograms 
+par(mfrow=c(1,2))
+hist(rancoefs2$s2_id[,"(Intercept)"], main = "Distribution of Random Intercepts")
+hist(rancoefs2$s2_id[,"pov"], main = "Distribution of Random Slopes")
+
+
+#Plot of random slopes, I iterate over all schools, drawing lines
+par(mfrow=c(1,1))
+fixef(fit2)
+summary(fixef(fit2)[1]+rancoefs2$s2_id)
+plot(NULL, ylim=c(35, 65), xlim=c(0,1),ylab="Math Score", xlab="HH Poverty Status")
+title (main="Random Slope and Intercept Model")
+cols=sample(rainbow(n=50), size = dim(rancoefs2$s2_id)[1], replace = T)
+for (i in 1: dim(rancoefs2$s2_id)[1]){
+  
+  abline(a=fixef(fit2)[1]+rancoefs2$s2_id[[1]][i], b=fixef(fit2)[13]+rancoefs2$s2_id[[2]][i], col=cols[i],lwd=.5 )
+}
+
+```
+
+Here is the ICC from fit 2
+```{r}
+VarCorr(fit2)
+VarCorr(fit2)$s2_id[4]/((attr(VarCorr(fit1), "sc")^2)+VarCorr(fit2)$s2_id[1]+VarCorr(fit2)$s2_id[4])
+#the "sc" attribute is the residual variance
+```
+

@@ -1,0 +1,319 @@
+---
+title: "Missing Data Imputation using Bayesian Models"
+author: "coreysparks"
+date: "October 29, 2014"
+output:
+  html_document:
+    highlight: tango
+---
+
+In this example, we will use Bayesian hierarchical models to do some imputation of missing data. I will first do a simple case where we use the posterior predictive distribution to impute a missing value.
+
+The second case will impute county poverty rates in Texas.
+
+The final example will impute student math scores from a longitudinal data set (the [ECLS-K ](http://nces.ed.gov/ecls/kinderdatainformation.asp) ). 
+
+We will use JAGS to illustrate the use of this type of imputation
+
+
+## Example 1
+In this example we will show how to impute missing values from the posterior predictive distribution using JAGS. This is actally very easy to do, as JAGS/BUGS will treat all missing values as stochastic nodes in the model and estimate their posterior directly.
+
+```{r simple_ex}
+library(rjags)
+model1<-"
+#continous outcome
+model{
+for (i in 1:n){
+y[i]~dnorm(mu[i], tau)
+mu[i]<-alpha+u[i]
+u[i]~dnorm(0, tauu)
+
+}
+alpha~dnorm(0,.001)
+tau~dgamma(.001, .001)
+tauu~dgamma(.001, .001)
+}
+"
+```
+
+First we load our data, Here I use the first 100 people from the 2011 BRFSS data's BMI variable
+```{r jags_simp_ex}
+load("/Users/ozd504/Google Drive/dem7903_App_Hier/data/brfss_11.Rdata")
+set.seed(seed = 1234)
+samps<-sample(1:dim(brfss_11)[1], size = 100, replace = F)
+dat<-list(y=brfss_11$"_BMI5"[samps]/100, n=100)
+
+init.rng1<-list(".RNG.seed" = 1234, ".RNG.name" = "base::Mersenne-Twister")
+init.rng2<-list(".RNG.seed" = 5678, ".RNG.name" = "base::Mersenne-Twister")
+mod<-jags.model(file=textConnection(model1), data=dat,inits =list(init.rng1, init.rng2) , n.chains=2)
+
+#next, we update the model, this is the "burn in" period
+update(mod, 1000)
+
+#sample 2000 samples from each chain (5,000/5 = 1000 * 2 chains = 2000)
+samps<-coda.samples(mod, variable.names=c( "mu"), n.iter=1000)
+
+#Numerical summary of the missing values
+sums<-summary(samps)
+sums$statistics[is.na(dat$y)==T,]
+mean(dat$y, na.rm=T)
+sd(dat$y, na.rm=T)
+
+```
+
+So we see that we have 5 missing cases, and their values have been imputed
+
+## Example 2
+This case involves us estimating the missing data for poverty rates at the county level in Texas from the American Community Survey. In this case, we have missing values both in the outcome (poverty rate) and a predictor (unemployment rate). We build a model to jointly estimate the missing values of unemployment, then use those values to help estimate the values of poverty. Since all the data are observed, we artifically knock out a sample of cases then compare our imputed estimates to the observed values that we knocked out. This is called a cross-validation experiment. 
+
+```{r tx_examp}
+library(maptools)
+library(car)
+dat<-readShapePoly("/Users/ozd504/Google Drive/dem7903_App_Hier/Bayes/TXsda.shp")
+dat$ppoor2k8<-ifelse(dat$ppoor2k8==0,NA, dat$ppoor2k8)
+dat$punem2k8<-ifelse(dat$punem2k8==0,NA, dat$punem2k8)
+
+dat2<-dat@data
+dat2$mispov<-dat2$ppoor2k
+dat2$misunem<-dat2$punemp2k
+set.seed(1234)
+
+#Here we artifically put in missing cases for 75 of the counties.
+dat2$mispov[sample(1:length(dat2$STATE), size=75, replace=F)]<-NA
+dat2$misunem[sample(1:length(dat2$STATE), size=75, replace=F)]<-NA
+
+summary(dat2$ppoor2k)
+summary(dat2$mispov)
+missings<-which(is.na(dat2$mispov)==T)
+
+N<-length(dat$STATE)
+
+model2<-"
+model{
+  for(i in 1:N)
+  {
+  
+pov[i]~dnorm(mu[i], taup)
+
+unem[i]~dnorm(muun[i],tauu)
+    mu[i] <- alpha + beta*muun[i]+v[i]
+    muun[i]<-alpha2+vu[i]
+   v[i]~dnorm(0, taup)
+  vu[i]~dnorm(0, tauu) 
+
+
+  }
+
+  alpha~dnorm(0, .01)
+  alpha2~dnorm(0, .01)
+  beta~dnorm(0,.01)
+  taup<-pow(sd1,-2)
+  sd1~dunif(0,100)
+  tauu<-pow(sd2,-2)
+  sd2~dunif(0,100)
+
+}
+"
+
+#generate the data
+#I use a logit transform of the rate to avoid prediction out of the 0:1 interval
+mdat<-list(pov=car::logit(dat2$mispov/100, adjust=.01), unem=car::logit(dat2$misunem/100, adjust=.01), N= N)
+
+init.rng1<-list(".RNG.seed" = 1234, ".RNG.name" = "base::Mersenne-Twister")
+init.rng2<-list(".RNG.seed" = 5678, ".RNG.name" = "base::Mersenne-Twister")
+mod<-jags.model(file=textConnection(model2), data=mdat,inits =list(init.rng1, init.rng2) , n.chains=2)
+
+#next, we update the model, this is the "burn in" period
+update(mod, 1000)
+
+#sample 2000 samples from each chain (5,000/5 = 1000 * 2 chains = 2000)
+samps<-coda.samples(mod, variable.names=c( "mu", "muun"), n.iter=1000)
+
+#Numerical summary of the missing values
+sums<-summary(samps)
+library(boot)
+dat$imppov<-inv.logit(sums$statistics[1:254,1])
+dat$impunemp<-inv.logit(sums$statistics[255:508,1])
+
+cbind(head(inv.logit(mdat$pov), n=15), head(mdat$imppov, n=15))
+
+```
+
+So we have our missing values, Let's compare them to the actual known values and see how our estimation did
+
+```{r tx_comparison}
+dat$BayesianEst<-inv.logit(sums$statistics[1:254,1])
+dat$unem.est<-inv.logit(sums$statistics[255:508,1])
+dat$MissingCounties<-dat2$mispov
+dat$misunem<-dat2$misunem
+dat$PovertyRate<-dat$ppoor2k
+
+dat$Imputed<-ifelse(is.na(dat$MissingCounties)==T, dat$BayesianEst,dat$ppoor2k)
+
+errs1<-(dat$BayesianEst[missings]-dat$ppoor2k[missings])/dat$ppoor2k[missings]
+mpe<-sum(errs1[is.finite(errs1)])*1/N
+mpe
+
+errs3<-abs((dat$BayesianEst[missings]-dat$ppoor2k[missings])/dat$ppoor2k[missings])
+mape<-100*sum(errs3[is.finite(errs3)])*1/N
+mape
+
+
+```
+
+So our model didn't estimate the rate very well, we were 29.2% off on average. This model could be improved by incorporating spatial structure into the model.
+
+
+## Example 3
+The last example will use the ECLS-K data. Here, we will impute student math scores for panels of the survey where the student was not observed. 
+```{r ecls_ex}
+load("~/Google Drive/dem7903_App_Hier/data/eclsk.Rdata")
+names(eclsk)<-tolower(names(eclsk))
+library (car)
+library(rjags)
+#get out only the variables I'm going to use for this example
+myvars<-c( "childid","gender", "race", "r1_kage","r2_kage", "r4age", "r5age", "r6age", "r7age","c1r4mtsc", "c4r4mtsc", "c5r4mtsc", "c6r4mtsc", "c7r4mtsc", "w1povrty","w1povrty","w3povrty", "w5povrty", "w8povrty","wkmomed", "s2_id", "p2fsstat","p5fsstat","p6fsstat","p7fsstat", "cregion")
+eclsk<-eclsk[,myvars]
+
+#recode outcome, math score at each of the 4 waves
+eclsk$math1<-ifelse(eclsk$c1r4mtsc==-9,NA, eclsk$c1r4mtsc)
+eclsk$math2<-ifelse(eclsk$c4r4mtsc==-9,NA, eclsk$c4r4mtsc)
+eclsk$math3<-ifelse(eclsk$c5r4mtsc==-9,NA, eclsk$c5r4mtsc)
+eclsk$math4<-ifelse(eclsk$c6r4mtsc==-9,NA, eclsk$c6r4mtsc)
+eclsk$math5<-ifelse(eclsk$c7r4mtsc==-9,NA, eclsk$c7r4mtsc)
+
+eclsk$age1<-ifelse(eclsk$r1_kage==-9, NA, eclsk$r1_kage/12)
+eclsk$age2<-ifelse(eclsk$r4age==-9, NA, eclsk$r4age/12)
+#for the later waves, the NCES group the ages into ranges of months, so 1= <105 months, 2=105 to 108 months. So, I fix the age at the midpoint of the interval they give, and make it into years by dividing by 12
+eclsk$age3<-recode(eclsk$r5age,recodes="1=105; 2=107; 3=109; 4=112; 5=115; 6=117; -9=NA")/12
+eclsk$age4<-recode(eclsk$r6age,recodes="1=118; 2=129; 3=135; 4=141; 5=155; -9=NA")/12
+eclsk$age5<-recode(eclsk$r7age,recodes="1=155; 2=166; 3=172; 4=178; 5=192; -9=NA")/12
+
+eclsk$pov1<-ifelse(eclsk$w1povrty==1,1,0)
+eclsk$pov2<-ifelse(eclsk$w1povrty==1,1,0)
+eclsk$pov3<-ifelse(eclsk$w3povrty==1,1,0)
+eclsk$pov4<-ifelse(eclsk$w5povrty==1,1,0)
+eclsk$pov5<-ifelse(eclsk$w5povrty==1,1,0)
+
+#Recode race with white, non Hispanic as reference using dummy vars
+eclsk$hisp<-recode (eclsk$race, recodes="3:4=1;-9=NA; else=0")
+eclsk$black<-recode (eclsk$race, recodes="2=1;-9=NA; else=0")
+eclsk$asian<-recode (eclsk$race, recodes="5=1;-9=NA; else=0")
+eclsk$nahn<-recode (eclsk$race, recodes="6:7=1;-9=NA; else=0")
+eclsk$other<-recode (eclsk$race, recodes="8=1;-9=NA; else=0")
+eclsk$male<-recode(eclsk$gender, recodes="1=1; 2=0; -9=NA")
+eclsk$mlths<-recode(eclsk$wkmomed, recodes = "1:2=1; 3:9=0; else = NA")
+eclsk$mgths<-recode(eclsk$wkmomed, recodes = "1:3=0; 4:9=1; else =NA") 
+
+```
+
+To analyze data longitudinally, we need to reshape the data from the current "wide" format (repeated measures in columns) to a "long" format (repeated observations in rows). The `reshape()` function allows us to do this easily. It allows us to specify our repeated measures, time varying covariates as well as time-constant covariates.
+
+This takes a long time to run with the full sample, so I just subset to children from the south census region (cregion==3)
+```{r}
+eclsk<-subset(eclsk, cregion==3)
+e.long<-reshape(eclsk, idvar="childid",  varying=list(math = c("math1", "math2", "math3", "math4","math5"),
+                                         age = c("age1", "age2", "age3", "age4", "age5"),
+                                         pov= c("pov1", "pov2", "pov3", "pov4", "pov5")),
+                                         times=1:5,direction="long",  
+                                          drop = names(eclsk)[c(4:19,22:25) ],)
+e.long<-e.long[order(e.long$childid, e.long$time),]
+
+
+```
+
+###Models
+The first model is a simple random intercept model for each child's mean for the math score, with a population trajectory for time, not child specific
+
+```{r}
+model1<-"
+model{
+
+#Likelihood
+  for( i in 1:n)
+    {
+     math[i]~dnorm(mu[i], tau)
+      mu[i]<-b0+b1*time[i]+u[childnum[i]]
+    mathpred[i]~dnorm(mu[i], tau)
+    }
+
+#priors
+#Prior for random intercept
+for (j in 1:nkids)
+  {
+    u[j] ~ dnorm(0, tauu)
+  }
+
+
+#regression effects
+b0~dnorm(0, .001)
+b1~dnorm(0, .001)
+
+tau<-pow(sd, -2)
+sd~dunif(0,100)
+tauu<-pow(sdu, -2)
+sdu~dunif(0,100)
+
+}
+"
+```
+
+I only use the first 200 children in the data (5 times *200 kids = 1000 lines of data)
+```{r}
+eshort<-e.long[1:1000,]
+
+nkids<-table(eshort$childid)
+head(nkids) #Number of people within counties
+eshort$childnum<-rep(1:length(unique(eshort$childid)), nkids)
+dat<-list(math=as.numeric(scale(eshort$math1, center=T, scale=T)), sex=eshort$male, black=eshort$black, hisp=eshort$hisp, other=eshort$other, asian=eshort$asian,pov=eshort$pov1,lths=eshort$mlths,gths=eshort$mgths,age=eshort$age1, time=eshort$time,childnum=eshort$childnum,n=length(eshort$math1), nkids=length(unique(eshort$childid)))
+lapply(dat , summary)
+
+```
+
+```{r}
+#Set some initial values
+init.rng1<-list(".RNG.seed" = 1234, ".RNG.name" = "base::Mersenne-Twister", sd=.1, sdu=.1)
+init.rng2<-list(".RNG.seed" = 5678, ".RNG.name" = "base::Mersenne-Twister", sd=.5, sdu=.5)
+
+#Initialize the model
+mod1<-jags.model(file=textConnection(model1), data=dat, n.chains=2,inits =list(init.rng1, init.rng2) )
+
+#burn in 
+update(mod1, 5000)
+
+#collect  samples of the parameters
+samps1<-coda.samples(mod1, variable.names=c("math"), n.iter=5000, n.thin=1)
+samps2<-coda.samples(mod1, variable.names=c("mu"), n.iter=5000, n.thin=1)
+
+#Numerical summary of each parameter:
+sums<-summary(samps1)$statistics[,1]
+sums2<-summary(samps2)$statistics[,1]
+
+#Insert imputed math scores into data frame, convert the z scores back to ecls t-scores
+eshort$math.imp<-(sums*10+50)
+
+```
+
+We can plot the children's scores over time to see trends within child. Some kids are missing, but the second plot shows the imputed values and the recovered trend lines. I only plot the first 20 kids
+
+```{r ,fig.height=6, fig.width=6}
+xyplot(math1~time|childid, data=eshort[1:100,],main = "Original Math Scores",
+       panel=function(x,y){
+       panel.xyplot(x,y)
+     panel.lmline(x,y)})
+
+
+xyplot(math.imp~time|childid, data=eshort[1:100,],main="Imputed Math Scores",
+       panel=function(x,y){
+       panel.xyplot(x,y)
+     panel.lmline(x,y)})
+
+
+
+
+
+```
+
+
+

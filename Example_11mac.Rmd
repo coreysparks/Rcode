@@ -1,0 +1,198 @@
+---
+title: "Structured Hierarchical Models"
+author: "coreysparks"
+date: "November 11, 2014"
+output: html_document
+---
+
+
+
+```{r}
+library(maptools) #reads in geographic data i.e. shapefiles
+library(spdep) #spatial analysis routines 
+library(RColorBrewer) #nice colors
+library(R2OpenBUGS) #run OpenBUGS from R
+library(coda)
+
+#read in big US shapefile with lots of stuff in it
+usdat<-readShapePoly("/Users/ozd504/Google Drive/dem7263//data/output12711.shp",  proj4string=CRS("+proj=lcc"))
+
+#read in infant mortality data from CDC Wonder
+infdat<-read.table("/Users/ozd504/Google Drive/dem7903_App_Hier/data/Compressed_Mortality_1999_2012.txt", na.strings = ".", header=T, sep="")
+
+infdat$cofips<-sprintf("%05d", infdat$CountyCode )
+infdat<-subset(infdat, subset=substr(infdat$cofips,1,2)=="48")
+infdat<-merge(infdat, usdat@data[, c("COFIPS_1", "f1254603", "f1254698")], by.x="cofips", by.y="COFIPS_1", all.x=T)
+infdat$births<-ifelse(is.na(infdat$Population)==T&infdat$Year<2001,infdat$f1254698,
+                      ifelse(is.na(infdat$Population)==T&infdat$Year>=2001,infdat$f1254603, infdat$Population))
+
+infdat<-infdat[order(infdat$cofips, infdat$Year),]
+head(infdat, n=20)
+summary(infdat)
+
+
+#We will use a binomial likelihood for our count data, so we extract y (failures=infant deaths) and n (trials=births)
+y<-infdat$Deaths
+n<-infdat$births
+
+#We need to know which counties are next to which other counties
+#First, make sure we have the same counties in our geographies and our mortality data, and we select only Texas counties
+co_mort<-unique(infdat$cofips)
+usdat<-usdat[usdat$COFIPS_1%in%co_mort,]
+plot(usdat)
+
+#make our Spatial neighbors lists and convert them to Win/OpenBUGS format
+nb<-poly2nb(usdat, queen = T)
+wts<-nb2WB(nb)
+
+```
+
+
+```{r}
+#don't need this on windows or linux, but you do on mac
+#you need to have wine installed on a mac, and install OpenBUGS via wine
+WINE="/opt/local/bin/wine"
+WINEPATH="/opt/local/bin/winepath"
+OpenBUGS.pgm="/Users/ozd504/.wine/drive_c/Program\ Files/OpenBUGS/OpenBUGS323/OpenBUGS.exe"
+
+#Make Convolution Model with temporal UH random effect : UH(space)+CH(space)+UH(time)
+model<-"
+model 
+  {
+    for (i in 1:N){
+    y[i]~dbin(mu[i], n[i])
+    logit(mu[i])<-a0  + u[conum[i]] + v[conum[i]] + time[year[i]]
+    
+  }
+
+
+#spatial effects
+#Unstructured random intercept for each county
+    for (j in 1:ncos){
+      v[j]~dnorm(0,tau_v)
+    }
+#spatial random intercept
+  u[1:ncos]~car.normal(adj[], weight[], num[], tau_u)
+  for (i in 1:sumNumNeigh){weight[i]<-1}
+
+#temporal random effect - unstructured for this model
+    for (j in 1:nyears){
+      time[j]~dnorm(0, tau_time)
+    }
+#set other priors for a0 and regression effects
+a0~dflat() #has to be this prior 
+
+#I use a prior on the standard deviation scale 
+#gamma priors can be very hard to sample from
+tau_v<-pow(sduv, -2)
+sduv~dunif(0,100)
+tau_u<-pow(sduu, -2)
+sduu~dunif(0,100)
+tau_time<-pow(sdut, -2)
+sdut~dunif(0,100)
+
+
+}
+#end model statement
+"
+
+#write out the model to a file
+write(model, "/Users/ozd504/infmort_mod1.txt")
+
+#Make the data to go into the model
+#county numbers
+ncos<-table(infdat$cofips)
+head(ncos) 
+conum<-rep(1:length(unique(infdat$cofips)), ncos)
+
+
+#Year/time numbers
+nyrs<-table(infdat$Year)
+nyrs 
+year<-rep(1:length(unique(infdat$Year)), nyrs)
+
+#data list
+dat<-list(y=y, n=n+1, N=length(y),ncos=length(nb),conum=conum, nyears=length(unique(infdat$Year)), year=year, adj=wts$adj, num=wts$num, sumNumNeigh=sum(wts$num))
+
+#OpenBUGS does better with initial values
+library(lme4)
+fit<-glmer(cbind(Deaths, births)~1+(1|cofips)+(1|Year), family=binomial, data=infdat)
+b<-as.numeric(fixef(fit));  time<-as.numeric(ranef(fit)$Year[,1])
+
+in1<-list(a0=b, u=rep(0, length(unique(dat$conum))), v=rnorm(length(unique(dat$conum)), 0, 1),time=time, sduv=sqrt(VarCorr(fit)$cofips[1]), sduu=sqrt(VarCorr(fit)$cofips[1]), sdut=sqrt(VarCorr(fit)$Year[1]))
+in2<-list(a0=b,  u=rep(0, length(unique(dat$conum))), v=rnorm(length(unique(dat$conum)), 0, .5), time=time, sduv=sqrt(VarCorr(fit)$cofips[1]), sduu=sqrt(VarCorr(fit)$cofips[1]), sdut=sqrt(VarCorr(fit)$Year[1]))
+
+#write out the data so OpenBUGS can read it
+bugs.data(data=dat, dir="/Users/ozd504/", data.file="data.txt")
+bugs.data(data=in1, dir="/Users/ozd504/", data.file="inits1.txt")
+bugs.data(data=in2, dir="/Users/ozd504/", data.file="inits2.txt")
+
+#Set where we want to work
+setwd("/Users/ozd504/")
+
+#Run OpenBUGS on our model, monitoring the intercept and the hyperparameters for the random intercepts. If these converge, the Random effects themselves will most likely be converged as well.  
+#Burn in for 10000 iterations, generate a total of 50k iterations for inference
+#Since this is run on a mac, I feed bugs() the information for my wine installation
+res1 <- bugs(data = "data.txt",
+             inits = list( in1, in2), 
+             parameters.to.save = c("a0", "sduu", "sduv", "sdut"),
+             model.file = "infmort_mod1.txt", 
+             n.chains = 2,
+             n.iter=50000,
+             n.burnin=30000,
+             n.thin=1,
+             bugs.seed=11,
+             working.directory="/Users/ozd504/", debug=F, 
+             OpenBUGS.pgm=OpenBUGS.pgm, WINE=WINE, WINEPATH=WINEPATH,useWINE=T)
+
+#examine convergence
+#look at dimnames(res2$sims.matrix) to find the right columns to use
+res1mc<-as.mcmc.list(res1)
+gelman.diag(res1mc)
+setwd("/Users/ozd504/Google Drive/dem7903_App_Hier/code/")
+png("gelman_plot.png")
+gelman.plot(res1mc)
+dev.off()
+png("traceplot_plot.png")
+traceplot(res1mc)
+dev.off()
+
+```
+![Gelman_Plot](gelman_plot.png)
+
+![Trace_Plot](traceplot_plot.png)
+
+
+```{r}
+#Re run the model to get samples for the random effects
+#This is primarily done so we can plot things
+res2 <- bugs(data = "data.txt",
+             inits = list( in1, in2), 
+             parameters.to.save = c("u", "v", "time"),
+             model.file = "infmort_mod1.txt", 
+             n.chains = 2,
+             n.iter=50000,
+             n.burnin=25000,
+             n.thin=1,
+             bugs.seed=11,
+             working.directory="/Users/ozd504/", debug=F, 
+             OpenBUGS.pgm=OpenBUGS.pgm, WINE=WINE, WINEPATH=WINEPATH,useWINE=T)
+
+#these are results from the convolution model
+
+#for the random effects for each county
+usdat$u<-res2$mean$u
+usdat$v<-res2$mean$v
+#Plot the temporal random effect
+
+plot(x=1999:2012, y=res2$mean$time, type="l", main = "Temporal Random Effect", xlab="Year", ylab="Deviation from Mean")
+
+#I typically map the UH and CH components
+png("maps.png")
+spplot(usdat, c("u", "v"), main="CH(u) and UH(v) components of the model",at=quantile(usdat$u), col.regions=brewer.pal(n = 5, name = "RdBu"))
+dev.off()
+```
+
+![Maps](maps.png)
+
+
