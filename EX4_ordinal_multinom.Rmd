@@ -1,0 +1,133 @@
+---
+title: "DEM 7283 - Example 4 - Ordinal & Multinomial Logit Models"
+author: "coreysparks"
+date: "February 9, 2015"
+output:
+  html_document:
+    fig_height: 7
+---
+
+This example will cover the use of R functions for fitting Ordinal and Multinomial logit models to complex survey data.
+
+For this example I am using 2011 CDC Behavioral Risk Factor Surveillance System (BRFSS) SMART county data. [Link](http://www.cdc.gov/brfss/smart/smart_2011.htm)
+
+```{r}
+#load brfss
+library(car)
+library(survey)
+library(nnet)
+load("~/Google Drive/dem7283/data/brfss_11.Rdata")
+
+#The names in the data are very ugly, so I make them less ugly
+nams<-names(brfss_11)
+head(nams, n=10)
+#we see some names are lower case, some are upper and some have a little _ in the first position. This is a nightmare.
+newnames<-gsub(pattern = "_",replacement =  "",x =  nams)
+names(brfss_11)<-tolower(newnames)
+
+#Our outcome this time is the full spectrum of reported health 
+brfss_11$health<-as.factor(ifelse(brfss_11$genhlth%in%c(7,9),NA, brfss_11$genhlth))
+brfss_11$health<-relevel(brfss_11$health, ref="1")
+brfss_11$health2<-ifelse(brfss_11$genhlth%in%c(7,9),NA, brfss_11$genhlth)
+
+#race/ethnicity
+brfss_11$black<-recode(brfss_11$racegr2, recodes="2=1; 9=NA; else=0")
+brfss_11$white<-recode(brfss_11$racegr2, recodes="1=1; 9=NA; else=0")
+brfss_11$other<-recode(brfss_11$racegr2, recodes="3:4=1; 9=NA; else=0")
+brfss_11$hispanic<-recode(brfss_11$racegr2, recodes="5=1; 9=NA; else=0")
+brfss_11$race_group<-recode(brfss_11$racegr2, recodes="1='NH white'; 2='NH black'; 3:4='NH other';5='hispanic'; else=NA", as.factor.result = T)
+brfss_11$race_group<-relevel(brfss_11$race_group, ref = 'NH white')
+#insurance
+brfss_11$ins<-ifelse(brfss_11$hlthpln1==1,1,0)
+
+#income grouping
+brfss_11$inc<-ifelse(brfss_11$incomg==9, NA, brfss_11$incomg)
+
+#education level
+brfss_11$educ<-recode(brfss_11$educa, recodes="1:2='0Prim'; 3='1somehs'; 4='2hsgrad'; 5='3somecol'; 6='4colgrad';9=NA", as.factor.result=T)
+#brfss_11$educ<-relevel(brfss_11$educ, ref='0Prim')
+
+#employment
+brfss_11$employ<-recode(brfss_11$employ, recodes="1:2='Employed'; 2:6='nilf'; 7='retired'; 8='unable'; else=NA", as.factor.result=T)
+brfss_11$employ<-relevel(brfss_11$employ, ref='Employed')
+
+#marital status
+brfss_11$marst<-recode(brfss_11$marital, recodes="1='married'; 2='divorced'; 3='widowed'; 4='separated'; 5='nm';6='cohab'; else=NA", as.factor.result=T)
+brfss_11$marst<-relevel(brfss_11$marst, ref='married')
+
+#Age cut into intervals
+brfss_11$agec<-cut(brfss_11$age, breaks=c(0,24,39,59,79,99))
+
+```
+
+###Analysis
+First, we will subset our data to have complete cases for our variables in our model and make our survey design object
+
+```{r}
+#First we tell R our survey design
+options(survey.lonely.psu = "adjust")
+brfss_11<-brfss_11[complete.cases(brfss_11$health,brfss_11$black,brfss_11$educ,brfss_11$agec) ,]
+des<-svydesign(ids=~psu, strata=~ststr, weights=~cntywt, data = brfss_11[is.na(brfss_11$cntywt)==F,], nest=T )
+
+```
+
+##Ordinal Regression example
+To fit an ordinal logit to survey data in R, we use the `svyolr` fucntion in the survey library. 
+
+```{r}
+#Here I fit three nested models for the health outcome
+fit.solr1<-svyolr(health~black+hispanic+other,des)
+fit.solr2<-svyolr(health~black+hispanic+other+educ,des)
+fit.solr3<-svyolr(health~black+hispanic+other+educ+agec,des)
+
+#Show summary of each model and calculate the AIC for each model, even though the AIC is probably not right
+summary(fit.solr1);fit.solr1$deviance+2*length(fit.solr1$coefficients)
+summary(fit.solr2);fit.solr2$deviance+2*length(fit.solr2$coefficients)
+summary(fit.solr3);fit.solr3$deviance+2*length(fit.solr3$coefficients)
+
+#"Examine" proportional odds assumption by fitting logits for each change
+ex1<-svyglm(I(health2>1)~black+hispanic+other+educ+agec,des, family="binomial")
+ex2<-svyglm(I(health2>2)~black+hispanic+other+educ+agec,des, family="binomial")
+ex3<-svyglm(I(health2>3)~black+hispanic+other+educ+agec,des, family="binomial")
+ex4<-svyglm(I(health2>4)~black+hispanic+other+educ+agec,des, family="binomial")
+
+#Just a a rough guide, I plot the coefficients of each model. If the proportional odds
+#assumption is ok, they all should be "approximately" the same values, they are NOT!!
+plot(coef(ex1)[-1], ylim=c(-2, 3), type="l", ylab="Beta", main=c("Comparison of betas for", " proportional odds assumption"))
+lines(coef(ex2)[-1], col=2) #not bad
+lines(coef(ex3)[-1], col=3) # again, not bad
+lines(coef(ex4)[-1], col=4) #not as good, the effect of age are very different for the change between
+#fair or better -> poor health
+
+
+#Just print the odds ratios, 
+round(exp(round(rbind(coef(ex1)[-1], coef(ex2)[-1], coef(ex3)[-1], coef(ex4)[-1]),2)),3)
+
+```
+
+
+###Multinomial Model
+Unfortunately, in R there is no multinomial survey design model, so we have to trick it, by creating some replicate weights. This is what Thomas Lumley (the author of the survey package) says to do in this case (and in cases where the type of  model can't be fit otherwise)
+**WARNING, THIS LOOKS SCREWY**
+```{r}
+#create a bootstrap replicate weight set
+des2<-as.svrepdesign(des, type="bootstrap" , replicates=10)
+#Now I fit the model, this is screwy looking
+mfit<-withReplicates(des2, quote(coef(multinom(health~black+hispanic+other+educ+agec,weights=.weights,trace=F ))))
+#get the betas
+mfitcoef<-data.frame(matrix(attr(attr(mfit, "var"), "means")[-1:-4], nrow=4, ncol=11, byrow=F))
+names(mfitcoef)<-names(coef(ex1)[-1])
+
+#odds ratios
+round(exp(mfitcoef), 3)
+
+#get the covariance matrix for the betas
+vcov<-matrix(attr(mfit, "var"), nrow=48, ncol=48)
+
+#get the z tests by using the coefficients and the standard errors (diag(vcov))
+z<-as.vector(mfitcoef/sqrt(diag(vcov)[-1:-4]))
+round(z, 2)
+#p values
+pvals<-round((1-pnorm(abs(as.matrix(z)),0,1))*2,4)
+round(pvals, 3)
+```

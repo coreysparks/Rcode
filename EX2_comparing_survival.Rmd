@@ -1,0 +1,213 @@
+---
+title: "Event History Analysis - Example 2 Comparing Survival Times Between Groups"
+author: "coreysparks"
+date: "January 28, 2015"
+output:
+  html_document:
+    fig_height: 6
+    fig_width: 6
+---
+
+This example will illustrate how to test for differences between survival functions estimated by the Kaplan-Meier product limit estimator. The tests all follow the methods described by Harrington and Fleming (1982) [Link](http://biomet.oxfordjournals.org/content/69/3/553.short). 
+
+The first example will use as its outcome variable, the event of a child dying before age 1. The data for this example come from the Haitian [Demographic and Health Survey for 2012](http://dhsprogram.com/data/dataset/Haiti_Standard-DHS_2012.cfm?flag=0) children's recode file. This file contains information for all births in the last 5 years prior to the survey.
+
+The second example, we will examine how to calculate the survival function for a longitudinally collected data set. Here I use data from the [ECLS-K ](http://nces.ed.gov/ecls/kinderdatainformation.asp). Specifically, we will examine the transition into poverty between kindergarten and fifth grade. 
+
+```{r}
+#Example 1
+library(foreign)
+library(survival)
+library(lattice)
+library(car)
+library(survey)
+
+haiti<-read.dta("/Users/ozd504/Google Drive/dem7223/data//HTKR61FL.DTA", convert.factors = F)
+```
+
+
+In the DHS, they record if a child is dead or alive and the age at death if the child is dead. If the child is alive at the time of interview, B5==1, then the age at death is censored. If the age at death is censored, then the age at the date of interview (censored age at death) is the date of the interview - date of birth (in months). If the child is dead at the time of interview, B5!=1, then the age at death in months is the B7. Here we code this:
+
+```{r}
+haiti$death.age<-ifelse(haiti$b5==1,
+                          ((((haiti$v008))+1900)-(((haiti$b3))+1900)) 
+                          ,haiti$b7)
+
+#censoring indicator for death by age 1, in months (12 months)
+haiti$d.event<-ifelse(is.na(haiti$b7)==T|haiti$b7>12,0,1)
+haiti$d.eventfac<-factor(haiti$d.event); levels(haiti$d.eventfac)<-c("Alive at 1", "Dead by 1")
+table(haiti$d.eventfac)
+
+```
+
+###Compairing Two Groups
+We will now test for differences in survival by characteristics of the household. First we will examine whether the survival chances are the same for children in relatively high ses (in material terms) households, compared to those in relatively low-ses households.
+
+```{r}
+haiti$highses<-recode(haiti$v190, recodes ="1:3 = 0; 4:5=1; else=NA")
+fit1<-survfit(Surv(death.age, d.event)~highses, data=haiti)
+plot(fit1, ylim=c(.9,1), xlim=c(0,14), col=c(1,2), conf.int=T)
+title(main="Survival Function for Infant Mortality", sub="Low vs. High SES Households")
+legend("topright", legend = c("Low SES", "High SES"), col=c(1,2), lty=1)
+summary(fit1)
+
+```
+
+Gives us the basic survival plot. Next we will use `survtest()` to test for differences between the two or more groups.
+
+```{r}
+#two group compairison
+survdiff(Surv(death.age, d.event)~highses, data=haiti)
+
+```
+
+Which is the log-rank test on the survival times. In this case, we see no difference in survival status based on household SES. How about rural vs urban residence?
+```{r}
+table(haiti$v025)
+haiti$rural<-recode(haiti$v025, recodes ="2 = 1; 1=0; else=NA")
+
+fit2<-survfit(Surv(death.age, d.event)~rural, data=haiti, conf.type = "log")
+plot(fit2, xlim=c(0,14), col=c(1,2), conf.int=T)
+title(main="Survival Function for Infant Mortality", sub="Rural vs Urban Residence")
+legend("topright", legend = c("Urban","Rural" ), col=c(1,2), lty=1)
+summary(fit2)
+
+#Two- sample test
+survdiff(Surv(death.age, d.event)~rural, data=haiti)
+
+```
+
+Which shows a significant difference between children living in rural (higher survival to age 1) versus urban (lower survival to age 1). This may be suggestive that children in urban areas may live in poorer environmental conditions.
+
+###k- sample test
+Next we illustrate a k-sample test, but this time we don't dichotomize household SES
+
+```{r}
+table(haiti$v190)
+
+fit3<-survfit(Surv(death.age, d.event)~v190, data=haiti)
+summary(fit3)
+plot(fit3, ylim=c(.9,1), xlim=c(0,14), col=1:5, conf.int=T)
+title(main="Survival Function for Infant Mortality", sub="Household SES")
+legend("topright", legend = c("Lowest","Low", "Median", "Higher", "Highest" ), col=1:5, lty=1)
+
+
+#Two- sample test
+survdiff(Surv(death.age, d.event)~v190, data=haiti)
+
+```
+Which shows variation in survival when SES is treated as quintiles, as the DHS defines it. The biggest difference we see is between the highest (light blue) and the median (green ) groups.
+
+Lastly, we examine comparing survival across multiple variables, in this case the 
+
+```{r}
+haiti$secedu<-recode(haiti$v106, recodes ="2:3 = 1; 0:1=0; else=NA")
+fit4<-survfit(Surv(death.age, d.event)~rural+secedu, data=haiti)
+summary(fit4)
+plot(fit4, ylim=c(.9,1), xlim=c(0,14), col=c(1,1,2,2),lty=c(1,2,1,2), conf.int=F)
+title(main="Survival Function for Infant Mortality", sub="Rural/Urban * Mother's Education")
+legend("topright", legend = c("Urban, Low Edu","Urban High Edu", "Rural, Low Edu","Rural High Edu" ), col=c(1,1,2,2),lty=c(1,2,1,2))
+
+# test
+survdiff(Surv(death.age, d.event)~rural+secedu, data=haiti)
+
+```
+
+Which shows a significant differenc between at *least* two of the groups, in this case, I would say that it's most likely finding differences between the Urban, low Education and the Rural.
+
+
+#Using survey design
+We can also, of course, conduct the analysis using survey design, for complex survey designs.
+```{r}
+haiti$wt<-haiti$v005/1000000
+des<-svydesign(ids=~v021, strata = ~v022, weights=~wt, data=haiti)
+
+fit.s<-svykm(Surv(death.age, d.event)~rural, design=des, se=T)
+svyby(~d.event, ~rural, des, svymean)
+#the plotting is a bit more of a challenge
+plot(fit.s[[1]], ylim=c(.9,1), xlim=c(0,14),pars=list(col=1), ci=F )
+lines(fit.s[[2]], col=2) 
+title(main="Survival Function for Infant Mortality", sub="Rural vs Urban Residence")
+legend("topright", legend = c("Urban","Rural" ), col=c(1,2), lty=1)
+head(data.frame(time=fit.s[[1]]$time, surv=fit.s[[1]]$surv), n=10)
+#test statistic
+svylogrank(Surv(death.age, d.event)~rural, design=des)
+```
+And we see the p-value is larger than assuming random sampling. 
+
+
+#Using Longitudinal Data
+In this example, we will examine how to calculate the survival function for a longitudinally collected data set. Here I use data from the [ECLS-K ](http://nces.ed.gov/ecls/kinderdatainformation.asp). Specifically, we will examine the transition into poverty between kindergarten and third grade. 
+
+First we load our data
+```{r}
+load("~/Google Drive/dem7903_App_Hier/data/eclsk.Rdata")
+names(eclsk)<-tolower(names(eclsk))
+library (car)
+library(survival)
+#get out only the variables I'm going to use for this example
+myvars<-c( "childid","gender", "race", "r1_kage","r4age", "r5age", "r6age", "r7age","c1r4mtsc", "c4r4mtsc", "c5r4mtsc", "c6r4mtsc", "c7r4mtsc", "w1povrty","w1povrty","w3povrty", "w5povrty", "w8povrty","wkmomed", "s2_id")
+eclsk<-eclsk[,myvars]
+
+
+eclsk$age1<-ifelse(eclsk$r1_kage==-9, NA, eclsk$r1_kage/12)
+eclsk$age2<-ifelse(eclsk$r4age==-9, NA, eclsk$r4age/12)
+#for the later waves, the NCES group the ages into ranges of months, so 1= <105 months, 2=105 to 108 months. So, I fix the age at the midpoint of the interval they give, and make it into years by dividing by 12
+eclsk$age3<-recode(eclsk$r5age,recodes="1=105; 2=107; 3=109; 4=112; 5=115; 6=117; -9=NA")/12
+
+eclsk$pov1<-ifelse(eclsk$w1povrty==1,1,0)
+eclsk$pov2<-ifelse(eclsk$w3povrty==1,1,0)
+eclsk$pov3<-ifelse(eclsk$w5povrty==1,1,0)
+
+#Recode race with white, non Hispanic as reference using dummy vars
+eclsk$hisp<-recode (eclsk$race, recodes="3:4=1;-9=NA; else=0")
+eclsk$black<-recode (eclsk$race, recodes="2=1;-9=NA; else=0")
+eclsk$asian<-recode (eclsk$race, recodes="5=1;-9=NA; else=0")
+eclsk$nahn<-recode (eclsk$race, recodes="6:7=1;-9=NA; else=0")
+eclsk$other<-recode (eclsk$race, recodes="8=1;-9=NA; else=0")
+eclsk$male<-recode(eclsk$gender, recodes="1=1; 2=0; -9=NA")
+eclsk$mlths<-recode(eclsk$wkmomed, recodes = "1:2=1; 3:9=0; else = NA")
+eclsk$mgths<-recode(eclsk$wkmomed, recodes = "1:3=0; 4:9=1; else =NA") 
+```
+
+
+Now, I need to form the transition variable, this is my event variable, and in this case it will be 1 if a child enters poverty between the first wave of the data and the third grade wave, and 0 otherwise. **NOTE** I need to remove any children who are already in poverty age wave 1, because they are not at risk of experiencing **this particular** transition.
+```{r}
+eclsk<-subset(eclsk, is.na(pov1)==F&is.na(pov2)==F&is.na(pov3)==F&is.na(age1)==F&is.na(age2)==F&is.na(age3)==F&pov1!=1)
+eclsk$povtran1<-ifelse(eclsk$pov1==0&eclsk$pov2==0, 0,1)
+eclsk$povtran2<-ifelse(eclsk$povtran1==1, NA,ifelse(eclsk$pov2==0&eclsk$pov3==0,0,1))
+
+```
+
+Now we do the entire data set. To analyze data longitudinally, we need to reshape the data from the current "wide" format (repeated measures in columns) to a "long" format (repeated observations in rows). The `reshape()` function allows us to do this easily. It allows us to specify our repeated measures, time varying covariates as well as time-constant covariates.
+
+```{r}
+e.long<-reshape(eclsk, idvar="childid", varying=list(age=c("age1","age2"), age2=c("age2", "age3"), povtran=c("povtran1", "povtran2")), times=1:2, direction="long" , drop = names(eclsk)[4:20])
+e.long<-e.long[order(e.long$childid, e.long$time),]
+
+#find which kids failed in the first time period and remove them from the second risk period risk set
+failed1<-which(is.na(e.long$povtran1)==T)
+e.long<-e.long[-failed1,]
+e.long$age1r<-round(e.long$age1, 0)
+e.long$age2r<-round(e.long$age2, 0)
+head(e.long, n=10)
+
+#poverty transition based on mother's education at time 1.
+fit<-survfit(Surv(time = age2r, event = povtran1)~mlths, e.long)
+summary(fit)
+plot(fit, col=c(2,3),ylim=c(.7,1), lwd=2 , main="Survival function for poverty transition, K-5th Grade")
+legend(x =0, y=.8,col = c(2,3),lty=1,lwd=2 ,legend=c("Mom HS or more", "Mom < HS"))
+survdiff(Surv(time = age2r, event = povtran1)~mlths, e.long)
+
+
+fit2<-survfit(Surv(time = age2r, event = povtran1)~mlths+black, e.long)
+summary(fit2)
+plot(fit2, col=c(2,3,2,3),lty=c(1,1,2,2),ylim=c(.5,1), lwd=2 )
+title(main="Survival function for poverty transition,  K-5th Grade", sub="By Race and Mother's Education")
+legend(x =0, y=.8,col=c(2,3,2,3),lty=c(1,1,2,2),lwd=2 ,legend=c("Mom > HS & Not Black", "Mom > HS & Black", "Mom < HS & Not Black", "Mom < HS & Black"))
+survdiff(Surv(time = age2r, event = povtran1)~mlths+black, e.long)
+
+```
+
+
+

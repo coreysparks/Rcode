@@ -1,0 +1,78 @@
+---
+title: "Survival Analysis 1 - Longitudinal Data"
+author: "coreysparks"
+date: "January 21, 2015"
+output: html_document
+---
+
+In this example, we will examine how to calculate the survival function for a longitudinally collected data set. Here I use data from the [ECLS-K ](http://nces.ed.gov/ecls/kinderdatainformation.asp). Specifically, we will examine the transition into poverty between kindergarten and third grade. 
+
+First we load our data
+```{r}
+load("~/Google Drive/dem7903_App_Hier/data/eclsk.Rdata")
+names(eclsk)<-tolower(names(eclsk))
+library (car)
+library(survival)
+#get out only the variables I'm going to use for this example
+myvars<-c( "childid","gender", "race", "r1_kage","r4age", "r5age", "r6age", "r7age","c1r4mtsc", "c4r4mtsc", "c5r4mtsc", "c6r4mtsc", "c7r4mtsc", "w1povrty","w1povrty","w3povrty", "w5povrty", "w8povrty","wkmomed", "s2_id")
+eclsk<-eclsk[,myvars]
+
+
+eclsk$age1<-ifelse(eclsk$r1_kage==-9, NA, eclsk$r1_kage/12)
+eclsk$age2<-ifelse(eclsk$r4age==-9, NA, eclsk$r4age/12)
+#for the later waves, the NCES group the ages into ranges of months, so 1= <105 months, 2=105 to 108 months. So, I fix the age at the midpoint of the interval they give, and make it into years by dividing by 12
+eclsk$age3<-recode(eclsk$r5age,recodes="1=105; 2=107; 3=109; 4=112; 5=115; 6=117; -9=NA")/12
+eclsk$age4<-recode(eclsk$r6age,recodes="1=118; 2=129; 3=135; 4=141; 5=155; -9=NA")/12
+eclsk$age5<-recode(eclsk$r7age,recodes="1=155; 2=166; 3=172; 4=178; 5=192; -9=NA")/12
+
+eclsk$pov1<-ifelse(eclsk$w1povrty==1,1,0)
+eclsk$pov2<-ifelse(eclsk$w1povrty==1,1,0)
+eclsk$pov3<-ifelse(eclsk$w3povrty==1,1,0)
+eclsk$pov4<-ifelse(eclsk$w5povrty==1,1,0)
+eclsk$pov5<-ifelse(eclsk$w5povrty==1,1,0)
+
+#Recode race with white, non Hispanic as reference using dummy vars
+eclsk$hisp<-recode (eclsk$race, recodes="3:4=1;-9=NA; else=0")
+eclsk$black<-recode (eclsk$race, recodes="2=1;-9=NA; else=0")
+eclsk$asian<-recode (eclsk$race, recodes="5=1;-9=NA; else=0")
+eclsk$nahn<-recode (eclsk$race, recodes="6:7=1;-9=NA; else=0")
+eclsk$other<-recode (eclsk$race, recodes="8=1;-9=NA; else=0")
+eclsk$male<-recode(eclsk$gender, recodes="1=1; 2=0; -9=NA")
+eclsk$mlths<-recode(eclsk$wkmomed, recodes = "1:2=1; 3:9=0; else = NA")
+eclsk$mgths<-recode(eclsk$wkmomed, recodes = "1:3=0; 4:9=1; else =NA") 
+```
+
+
+Now, I need to form the transition variable, this is my event variable, and in this case it will be 1 if a child enters poverty between the first wave of the data and the third grade wave, and 0 otherwise. **NOTE** I need to remove any children who are already in poverty age wave 1, because they are not at risk of experiencing **this particular** transition.
+```{r}
+eclsk<-subset(eclsk, is.na(pov1)==F&is.na(pov4)==F&is.na(age1)==F&is.na(age3)==F&pov1!=1)
+eclsk$povtran13<-ifelse(eclsk$pov1==0&eclsk$pov4==0, 0,1)
+                       
+```
+
+This is just a little example using the first 20 kids, just to illustrate the data.
+```{r}
+test<-eclsk[1:20,]
+#look at the data in "wide" format
+head(test)
+```
+
+
+Now we do the entire data set. To analyze data longitudinally, we need to reshape the data from the current "wide" format (repeated measures in columns) to a "long" format (repeated observations in rows). The `reshape()` function allows us to do this easily. It allows us to specify our repeated measures, time varying covariates as well as time-constant covariates.
+
+```{r}
+e.long<-reshape(eclsk, idvar="childid",  varying=list(enter = "age1", exit="age3"),
+                                         times=1, direction="long" , 
+                                          drop = names(test)[4:20])
+e.long<-e.long[order(e.long$childid, e.long$time),]
+head(e.long, n=10)
+
+#round age to nearest year
+e.long$age1r<-round(e.long$age1, 0)
+fit<-survfit(Surv(age1, age3, povtran13)~mlths, e.long)
+summary(fit)
+plot(fit, col=c(2,3),xlim=c(7,11), lwd=2 , main="Survival function for poverty transition, K-8th")
+legend(x =7, y=.8,col = c(2,3),lty=1,lwd=2 ,legend=c("Mom HS or more", "Mom < HS"))
+
+```
+

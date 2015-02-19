@@ -1,0 +1,144 @@
+---
+title: "DEM 7283 - Example 3 - Logit and Probit Model"
+author: "coreysparks"
+date: "February 2, 2015"
+output:
+  html_document:
+    fig_height: 7
+---
+
+This example will cover the use of R functions for fitting binary logit and probit models to complex survey data.
+
+For this example I am using 2011 CDC Behavioral Risk Factor Surveillance System (BRFSS) SMART county data. [Link](http://www.cdc.gov/brfss/smart/smart_2011.htm)
+
+```{r}
+#load brfss
+library(car)
+library(stargazer)
+library(survey)
+library(sjPlot)
+load("~/Google Drive/dem7283/data/brfss_11.Rdata")
+
+#The names in the data are very ugly, so I make them less ugly
+nams<-names(brfss_11)
+head(nams, n=10)
+#we see some names are lower case, some are upper and some have a little _ in the first position. This is a nightmare.
+newnames<-gsub(pattern = "_",replacement =  "",x =  nams)
+names(brfss_11)<-tolower(newnames)
+
+#Poor or fair self rated health
+#brfss_11$badhealth<-ifelse(brfss_11$genhlth %in% c(4,5),1,0)
+brfss_11$badhealth<-recode(brfss_11$genhlth, recodes="4:5=1; 1:3=0; else=NA")
+#race/ethnicity
+brfss_11$black<-recode(brfss_11$racegr2, recodes="2=1; 9=NA; else=0")
+brfss_11$white<-recode(brfss_11$racegr2, recodes="1=1; 9=NA; else=0")
+brfss_11$other<-recode(brfss_11$racegr2, recodes="3:4=1; 9=NA; else=0")
+brfss_11$hispanic<-recode(brfss_11$racegr2, recodes="5=1; 9=NA; else=0")
+brfss_11$race_group<-recode(brfss_11$racegr2, recodes="1='NH white'; 2='NH black'; 3:4='NH other';5='hispanic'; else=NA", as.factor.result = T)
+brfss_11$race_group<-relevel(brfss_11$race_group, ref = 'NH white')
+#insurance
+brfss_11$ins<-ifelse(brfss_11$hlthpln1==1,1,0)
+
+#income grouping
+brfss_11$inc<-ifelse(brfss_11$incomg==9, NA, brfss_11$incomg)
+
+#education level
+brfss_11$educ<-recode(brfss_11$educa, recodes="1:2='0Prim'; 3='1somehs'; 4='2hsgrad'; 5='3somecol'; 6='4colgrad';9=NA", as.factor.result=T)
+#brfss_11$educ<-relevel(brfss_11$educ, ref='0Prim')
+
+#employment
+brfss_11$employ<-recode(brfss_11$employ, recodes="1:2='Employed'; 2:6='nilf'; 7='retired'; 8='unable'; else=NA", as.factor.result=T)
+brfss_11$employ<-relevel(brfss_11$employ, ref='Employed')
+
+#marital status
+brfss_11$marst<-recode(brfss_11$marital, recodes="1='married'; 2='divorced'; 3='widowed'; 4='separated'; 5='nm';6='cohab'; else=NA", as.factor.result=T)
+brfss_11$marst<-relevel(brfss_11$marst, ref='married')
+
+#Age cut into intervals
+brfss_11$agec<-cut(brfss_11$age, breaks=c(0,24,39,59,79,99))
+
+```
+
+###Analysis
+First, we will do some descriptive analysis, such as means and cross tabulations.
+```{r}
+brfss_11$cat<-1
+#First we tell R our survey design
+options(survey.lonely.psu = "adjust")
+des<-svydesign(ids=~psu, strata=~ststr, weights=~cntywt, data = brfss_11[is.na(brfss_11$cntywt)==F,] , nest=T)
+
+#First, we examine the % of US adults with poor/fair health by education level, and do a survey-corrected chi-square test for independence.
+cat<-svyby(formula = ~badhealth, by = ~educ, design = des, FUN = svymean, na.rm=T)
+svychisq(~badhealth+educ, design = des)
+qplot(x=cat$educ,y=cat$badhealth, data=cat ,xlab="Education", ylab="%  Fair/Poor Health" )+
+geom_errorbar(aes(x=educ, ymin=badhealth-se,ymax= badhealth+se), width=.25)+
+ggtitle(label = "% of US Adults with Fair/Poor Health by Education")
+
+#calculate race*health cross tabulation, and plot it
+dog<-svyby(formula = ~badhealth, by = ~race_group, design = des, FUN = svymean, na.rm=T)
+svychisq(~badhealth+race_group, design = des)
+qplot(x=dog$race_group,y=dog$badhealth, data=dog ,xlab="Race", ylab="%  Fair/Poor Health" )+
+geom_errorbar(aes(x=race_group, ymin=badhealth-se,ymax= badhealth+se), width=.25)+
+ggtitle(label = "% of US Adults with Fair/Poor Health by Race/Ethnicity")
+
+#calculate race*education*health cross tabulation, and plot it
+catdog<-svyby(formula = ~badhealth, by = ~race_group+educ, design = des, FUN = svymean, na.rm=T)
+catdog
+#this plot is a little more complicated
+catdog$race_rec<-rep(c("White","Hispanic", "Black", "Other" ),5)
+catdog$educ_rec<-factor(c(rep("Primary Sch", 4), rep("LT HS", 4), rep("HS Grad", 4), rep("Some College", 4), rep("College Grad", 4)),)
+
+p<-ggplot(catdog, aes(educ_rec,badhealth,),xlab="Race", ylab="% Bad Health")
+p<-p+geom_point(aes(colour=race_rec))
+p<-p+geom_line(aes(colour=race_rec,group=race_rec))
+p<-p+geom_errorbar(aes(x=educ_rec, ymin=badhealth-se,ymax= badhealth+se,colour=race_rec), width=.25)
+p<-p+ylab("% Fair/Poor Health")
+p<-p+xlab("Education Level")
+p+ggtitle("% of US Adults in 2011 in Bad Health by Race and Education")
+```
+
+
+Which shows a significant variation in health status by education level and race/ethnicty
+
+##Logit/Probit Regression example
+There is no trick to fitting logistic regression models usign survey data, just use the `svyglm()` function with the apppriate distribution specified via `family=binomial` for logistic and `family=binomial(link="probit")` for the probit model. You don't have to specify the link function if you're just doing the logistic model, as it is the default. 
+
+```{r, results="asis"}
+fit.logit<-svyglm(badhealth~race_group+educ+agec,design= des, family=binomial)
+fit.probit<-svyglm(badhealth~race_group+educ+agec, design=des, family=binomial(link= "probit"))
+
+stargazer(fit.logit, fit.probit, type="html", style="demography",title="Logit and Probit Fits", column.labels = c("Logit Model", "Probit Model"), covariate.labels=c("Hispanic", "Black", "Other","PrimarySchool", "SomeHS", "SomeColl", "CollGrad", "Age 24-39","Age 39-59" ,"Age 59-79", "Age 80+"), keep.stat="n", model.names=F, align=T)
+
+```
+
+###Effect Plots
+These are nice plots of the model effects
+```{r }
+
+sjp.glm(fit.logit,title="Odds Ratios for Fair/Poor vs Good Health" , sortOdds=F, showModelSummary=T, printPlot = F)
+
+sjp.glm(fit.probit,title="Odds Ratios for Fair/Poor vs Good Health", sortOdds=F, showModelSummary=T)
+
+```
+
+
+###Fitted Values
+As I often say, I like to talk about "interesting cases". In order to do this, you need the fitted mean for a particular case. This is done by getting the fitted values for that case from the model. To do this, I generate a bunch of "fake people" that have variability in the model covariates, and fit the model for each type of person. This is perhaps overkill in this example because I fit every type of person, ideally you would want a few interesting cases to discuss:
+
+```{r}
+#get a series of predicted probabilites for different "types" of people for each model
+dat<-expand.grid(race_group=levels(brfss_11$race_group), educ=levels(brfss_11$educ), agec=levels(brfss_11$agec))
+
+#You MAY need to get rid of impossible cases here
+
+#generate the fitted values
+fit<-predict(fit.logit, newdat=dat,type="response")
+fitp<-predict(fit.probit, newdat=dat,type="response")
+#add the values to the fake data
+dat$fitted.prob.lrm<-round(fit, 3)
+dat$fitted.prob.pro<-round(fitp, 3)
+
+#Print the fitted probabilities for the first 20 cases
+head(dat, n=20)
+
+```
