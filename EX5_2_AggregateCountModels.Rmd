@@ -84,3 +84,12 @@ AIC(fit.bblm)@istats$AIC
 ```
 
 The beta-binomial model appears to fit the data best, with and AIC of `r round(AIC(fit.bblm)@istats$AIC, 2)`. 
+
+Map the fitted rates
+```{r fitted plot}
+dat$fitted<-1000*predict(fit.bblm)
+plot(mortrate~fitted, dat)
+spplot(dat, "fitted", at=quantile(dat$fitted), col.regions=brewer.pal(n = 6, name = "Blues"), main="Fitted Rates")
+
+
+```
