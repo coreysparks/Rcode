@@ -1,0 +1,159 @@
+---
+title: "Example 9 - Competing Risks"
+author: "coreysparks"
+date: "April 1, 2015"
+output: html_document
+---
+
+This example uses data from the National Health Interview Survey (NHIS) linked mortality data obtained from the Minnesota Population Center's [IHIS](https://www.ihis.us/ihis/) program, which links the NHIS survey files from 1986 tp 2004 to mortality data from the National Death Index (NDI). The death follow up currently ends at 2006.
+
+Below, I code a competing risk outcome, using four different causes of death as competing events, and age at death as the outcome variable. 
+
+The data are pretty big, so I take a subset of 20,000 people for the example presented below. Using the whole sample may make your computer explode. **You have been warned**
+
+```{r}
+library(survey)
+library(survival)
+library(car)
+library(cmprsk)
+load("~/Google Drive/dem7223/ihis_mort.Rdata")
+names(ihis_mort)
+sub<-subset(ihis_mort, ihis_mort$mortelig==1&is.na(ihis_mort$racenew)==F)
+samps<-sample(1:length(sub$psu), size = 20000, replace = F)
+sub<-sub[samps,]
+
+rm(ihis_mort)
+sub$d.age<-ifelse(sub$mortstat==1,sub$mortdody-(sub$year-sub$age) ,
+                  ifelse(sub$mortstat==2,2006-(sub$year-sub$age), NA))
+sub$d.event<-ifelse(sub$mortstat==1,1,0)
+sub$married<-recode(sub$marstat, recodes="00=NA; 10:13='married'; 20:40='sep'; 50='nm'; 99=NA" ,as.factor.result=T )
+sub$male<-ifelse(sub$sex==1,1,0)
+sub$mwt<-sub$mortwt/mean(sub$mortwt, na.rm=T)
+sub$race<-recode(sub$racenew, recodes ="10='wht'; 20 ='blk'; 30:61='other'; 97:99=NA", as.factor.result=T)
+sub$college<-recode(sub$EDUCREC2, recodes="00=NA; 10:42='hs or less'; 50:53='some coll'; 54:60='coll'; else=NA", as.factor.result=T)
+sub$black<-ifelse(sub$race=='blk',1,0)
+sub$oth<-ifelse(sub$race=='other',1,0)
+sub$hs<-ifelse(sub$college=='hs or less',1,0)
+sub$col1<-ifelse(sub$college=='some coll',1,0)
+sub$sep<-ifelse(sub$married=='sep',1,0)
+sub$nm<-ifelse(sub$married=='nm',1,0)
+```
+
+
+Now we want to examine the competing risks of mortality from various causes, we use the mortucod variable create a variable indicating major causes of death lumping other causes together(1=cancers, 2=CVD, 3=infectious, 4=other causes, NA=alive) 
+```{r}
+sub$cod<-recode(sub$mortucod, recodes="20:44=1; 55:75=2;1:18=3;77:83=3;46:52=4;45=4;84:135=4; 999=NA")
+
+#Here I generate censoring indicators, one for each type of failure
+sub$fail1<-ifelse(sub$cod==1&sub$d.event==1, 1,0)
+sub$fail2<-ifelse(sub$cod==2&sub$d.event==1, 1,0)
+sub$fail3<-ifelse(sub$cod==3&sub$d.event==1, 1,0)
+sub$fail4<-ifelse(sub$cod==4&sub$d.event==1, 1,0)
+#sub$codcens=ifelse(is.na(sub$cod)==T,0,sub$cod)
+sub$codcens[sub$fail1==0&sub$fail2==0&sub$fail3==0&sub$fail4==0]<-0
+sub$codcens[sub$fail1==1|sub$fail2==1|sub$fail3==1|sub$fail4==1]<-1
+table(sub$codcens, sub$d.event)
+table(sub$cod, sub$d.event)
+```
+
+Form a survey design object and examine some basic mortality curves by sex and failure type:
+
+```{r}
+options(survey.lonely.psu="adjust")
+des<-svydesign(ids=~psu, strata=~strata, weights = ~mortwt, data=sub[sub$mortwt>0,], nest=T)
+
+fit.s<-svykm(Surv(d.age, d.event)~male, design=des, se=F)
+fit.s
+plot(fit.s, pars=list(col=c(1,2)) )
+title(main="Survival Function for Adult Mortality", sub="Male vs. Female")
+legend("bottom", legend = c("Female","Male" ), col=c(1,2), lty=1)
+
+#test statistic
+svylogrank(Surv(d.age, d.event)~male, design=des)
+
+
+fit.s2<-svykm(Surv(d.age, d.event)~strata(cod), design=des, se=F)
+fit.s2
+plot(fit.s2, pars=list(col=c(1,2,3,4)), ylab="Survival", xlab="Age", main="Survival functions for competing causes of death")
+legend("bottom", legend=c("Cancers", "CVD","Infectious", "Other"), lty=1, col=1:4, cex=.8)
+```
+
+
+Here is the overall hazard model using the Cox PH model, this model is for all-cause mortality.
+```{r}
+#all failures
+fita<-svycoxph(Surv(d.age,d.event)~male+married+race+college, design=des)
+summary(fita)
+plot(survfit(fita))
+```
+
+### Type-specific hazard models
+These models take the approach suggested by Allison, where for a given cause of death, any other cause is assumed to be censored.
+```{r}
+#Cancer
+fit1<-svycoxph(Surv(d.age,fail1==1)~male+married+race+college,des)
+summary(fit1)
+plot(survfit(fit1), main="Survival for Cancer Mortality")
+
+#CVD
+fit2<-svycoxph(Surv(d.age, fail2==1)~male+married+race+college, des)
+summary(fit2)
+plot(survfit(fit2), main="Survival for CVD Mortality")
+
+#Infectious
+fit3<-svycoxph(Surv(d.age, fail3==1)~male+married+race+college, des)
+summary(fit3)
+plot(survfit(fit3), main="Survival for Infectious Mortality")
+
+#Other
+fit4<-svycoxph(Surv(d.age, fail4==1)~male+married+race+college, des)
+summary(fit4)
+plot(survfit(fit4), main="Survival for Other Cause Mortality")
+```
+
+
+Construct a test of whether the betas are the same for each failure type using a Chow Test (See Allison p 217 for this). Basically we compare the deviance of the model with all causes of death to the sum of the deviances from each of the competing risk situations. If the test is significant, the it suggests that each cause of death has a different combination of the beta's in the model. I.e. the regression effects are not the same across causes of death.
+```{r}
+#deviance from total model
+d1<--2*fita$ll[2]
+
+#sum of deviances from cause-specific models
+otherds<- (-2*fit1$ll[2]+ -2*fit2$ll[2]+ -2*fit3$ll[2]+ -2*fit4$ll[2])
+
+#Chow test
+test<- d1-otherds
+df<-(length(coef(fit1))*3)-length(coef(fita))
+#print the test results
+print(list(test=test, df=df,pval= pchisq(test, df=df, lower=F)))
+```
+
+Alternatively, we could simply stratifiy the baseline hazard by type of failure
+```{r}
+fits<-svycoxph(Surv(d.age, d.event)~male+married+race+college+strata(cod), des)
+summary(fits)
+plot(survfit(fits), col=1:4)
+legend("bottom", legend=c("Cancers", "CVD","Infectious", "Other"), lty=1, col=1:4)
+```
+
+### Competing Risk Regression
+The `crr()` function in the `cmprsk` library uses the methods discussed in [Fine and Gray, 1999](http://amstat.tandfonline.com/doi/abs/10.1080/01621459.1999.10474144#.VRxYIjvF9v0) for regression modeling for the subdistribution function for a competing risk.  This is still a proportional hazards model for the key event of interest, but takes into account failures from other causes.
+
+```{r}
+sub$cod2<-ifelse(is.na(sub$cod)==T,0,sub$cod)
+#Make a matrix of predictors
+covs<-data.frame(sub$male,sub$nm, sub$sep, sub$black, sub$oth, sub$hs, sub$col1)
+names(covs)<-c("male", "neverm", "separated", "black", "other", "hsorless", "somecoll")
+head(covs)
+
+#Fit the cumulative incidence model of Fine and Gray for cancer mortality
+fit.crr<-crr(ftime=sub$d.age, fstatus=sub$cod2,cov1=covs, failcode=1,cencode=0 )
+summary(fit.crr)
+
+#Plot some interesting cases
+z.p<-predict(fit.crr, rbind(c(0,0,0,0,0,0,0),c(0,0,0,1,0,0,0),c(1,1,0,0,0,1,0),c(1,1,0,1,0,1,0)))
+plot(z.p, col=1:4, lty=1, xlim=c(40,90), ylab="Cumulative Incidence", xlab="Age")
+legend("topleft", legend=(c("Fem, Mar,Wh,Col","Fem, Mar,Bl,Col","Ma,NMar,Wh,HS","Ma,NMar,Bl,HS")), col=1:4, lty=1)
+title(main="Cumulative Incidence of Cancer Mortalty")
+
+
+```
