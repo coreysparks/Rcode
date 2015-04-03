@@ -1,0 +1,271 @@
+---
+title: "Event History Analysis - Example 6 - Discrete Time Hazard Model"
+author: "coreysparks"
+date: "February 25, 2015"
+output:
+  html_document:
+    fig_height: 7
+    fig_width: 7
+---
+
+This example will illustrate how to fit the discrete time hazard model to continuous duration data (i.e. person-level data) and a discrete-time (longitudinal) data set. In this example, I will use the event of a child dying before age 5 in Haiti. The data for this example come from the Haitian [Demographic and Health Survey for 2012](http://dhsprogram.com/data/dataset/Haiti_Standard-DHS_2012.cfm?flag=0) birth recode file. This file contains information for all live births to women sampled in the survey.
+
+The longitudinal data example uses data from the [ECLS-K ](http://nces.ed.gov/ecls/kinderdatainformation.asp). Specifically, we will examine the transition into poverty between kindergarten and 8th grade. 
+
+
+```{r load}
+#Load required libraries
+library(foreign)
+library(survival)
+library(car)
+library(survey)
+
+#load the data
+haiti<-read.dta("/Users/ozd504/Google Drive/dem7223/data/HTBR61FL.DTA", convert.factors = F)
+```
+
+
+```{r extract_data}
+#We form a subset of variables
+sub<-data.frame(CASEID=haiti$caseid,kidid=paste(haiti$caseid, haiti$bidx, sep="-"), v008=haiti$v008,bord=haiti$bidx,csex=haiti$b4,b2=haiti$b2, b3=haiti$b3, b5=haiti$b5, b7=haiti$b7, ibint=haiti$b11, rural=haiti$v025, educ=haiti$v106,age=haiti$v012,partneredu=haiti$v701,partnerage=haiti$v730, hhses=haiti$v190, weight=haiti$v005/1000000, psu=haiti$v021, strata=haiti$v022)
+
+sub$death.age<-ifelse(sub$b5==1,
+                          ((((sub$v008))+1900)-(((sub$b3))+1900)) 
+                          ,sub$b7)
+
+#censoring indicator for death by age 5, in months (<=60 months)
+sub$d.event<-ifelse(is.na(sub$b7)==T|sub$b7>60,0,1)
+sub$d.eventfac<-factor(sub$d.event); levels(sub$d.eventfac)<-c("Alive at Age 5", "Dead by Age 5")
+table(sub$d.eventfac)
+
+#recodes
+sub$male<-ifelse(sub$csex==1,1,0)
+sub$educ.high<-ifelse(sub$educ %in% c(2,3), 1, 0)
+sub$age2<-sub$age^2
+sub$partnerhiedu<-ifelse(sub$partneredu<3,0,ifelse(sub$partneredu%in%c(8,9),NA,1 ))
+sub$hises<-ifelse(sub$hhses>3, 1,0)
+```
+
+###Create the person-period file
+The distinction between the way we have been doing things and the discrete time model, is that we treat time discretely, versus continuously. This means that we transform the data from the case-duration data format to the person-period format. For this example, a natural choice would be year, since we have 5 intervals of equal length (12 months each).  R provides a useful function called `survSplit()` in the `survival` library that will split a continuous duration into discrete periods.
+
+```{r}
+#make person period file
+pp<-survSplit(sub, cut=seq(0,60,12), start="start", end="death.age", event="d.event", episode="year")
+pp<-pp[order(pp$kidid, pp$year),]
+head(pp[, c("kidid", "death.age", "d.event", "start", "year", "male", "hises")], n=20)
+
+```
+
+We see that each child is not in the data for multiple "risk periods", until they experience the event (death) or age out of the risk set (year 6 in this case). 
+
+###Discrete time model
+So, the best thing about the discrete time model, is that it's just logistic regression. Each risk period is treated as a single Bernoulli trial, and the child can either fail (y=1) or not (y=0) in the period. This is how we get the hazard of the event, as the estimated probability of failure in each discrete time period. So, any method you would like to use to model this probability would probably work (logit, probit models), but I will show two standard approaches. First, we will use the traditional logit link to the binomial distribution, then we will use the complementary log-log link. The latter is used because it preserves the proportional hazards property of the model, as in the Cox model.
+
+```{r models1}
+#generate survey design
+
+des<-svydesign(ids=~psu, strata = ~strata , weights=~weight, data=pp)
+
+#Fit the basic logistic model with ONLY time in the model
+#I do -1 so that no intercept is fit in the model, and we get a hazard estimate for each time period
+fit.0<-svyglm(d.event~as.factor(year)-1,design=des , family="binomial")
+summary(fit.0)
+
+#Plot the hazard function on the probability scale
+haz<-1/(1+exp(-coef(fit.0)))
+time<-seq(1,6,1)
+plot(haz~time, type="l", ylab="h(t)", ylim=c(0,.05))
+title(main="Discrete Time Hazard Function for Child Mortality")
+
+
+#now we include a single predictor and examine the proportional hazards
+
+fit.1<-svyglm(d.event~as.factor(year)+hises-1,design=des , family="binomial")
+summary(fit.1)
+```
+
+Which shows a lower risk of death for children of higher SES households. In fact, it's a `r round(100*(exp(-0.32431)-1), 2)`% lower risk
+
+Next, I do the plots of the hazard functions the Singer and Willett way. I got this code from Singer and Willett's [example from Ch 11](http://www.ats.ucla.edu/stat/r/examples/alda/ch11.htm)
+```{r}
+t<-data.frame(cbind(y=1/(1+exp(-fit.1$linear.predictors)), year=pp$year,hises=pp$hises))
+t0<-t[t$hises==0,]
+t0<-unique(t0[order(t0$year),])
+t1<-t[t$hises==1,]
+t1<-unique(t1[order(t1$year),])
+
+#Here we plot the hazards, I subtract .5 from each time so it looks like the hazard is at the midpoint of the year
+plot(t0$year-.5, t0$y, type="b", ylab="Hazard", ylim=c(0, max(t0$y, t1$y)), xlim=c(0,6), xlab="Year", col="red", main =c("Discrete time hazard model", "effect of Household SES"))
+points(t1$year-.5, t1$y, type="b", col="blue")
+legend("topright", legend=c("LOW SES", "HIGH SES"), col=c("red", "blue"),lty=1)
+```
+
+But I like this way too, using `expand.grid` to make the various types of people, and using `predict()` get fitted values. Same thing, just more compact:
+```{r}
+dat<-expand.grid(year=1:6, hises=c(0,1))
+dat$fitted<-predict(fit.1, type = "response", newdata=dat)
+
+plot(dat$year[dat$hises==0]-.5, dat$fitted[dat$hises==0], type="b", ylab="Hazard", ylim=c(0, max(t0$y, t1$y)), xlim=c(0,6), xlab="Year", col="red", main =c("Discrete time hazard model", "effect of Household SES"))
+points(dat$year[dat$hises==1]-.5, dat$fitted[dat$hises==1], type="b", col="blue")
+legend("topright", legend=c("LOW SES", "HIGH SES"), col=c("red", "blue"),lty=1)
+```
+
+See, same thing.
+
+Interaction between covariate and time
+
+```{r}
+fit.2<-svyglm(d.event~as.factor(year)*hises-1,design=des , family="binomial")
+summary(fit.2)
+
+dat<-expand.grid(year=1:6, hises=c(0,1))
+dat$fitted<-predict(fit.2, type = "response", newdata=dat)
+#plot the interaction with time
+plot(dat$year[dat$hises==0]-.5, dat$fitted[dat$hises==0], type="b", ylab="Hazard", ylim=c(0, max(t0$y, t1$y)), xlim=c(0,6), xlab="Year", col="red", main =c("Discrete time hazard model", "effect of Household SES"))
+points(dat$year[dat$hises==1]-.5, dat$fitted[dat$hises==1], type="b", col="blue")
+legend("topright", legend=c("LOW SES", "HIGH SES"), col=c("red", "blue"),lty=1)
+
+```
+
+Which shows the bigger gap in the hazard for high SES households in periods 2 &3 (and even 5, although it's hard to see), as per the output from the model.
+
+###log-log link function
+I promised I would show this too, nothing heavy, but the log-log link function preserves the proportional hazards property:
+```{r}
+fit.3<-svyglm(d.event~as.factor(year)*hises-1,design=des , family=binomial(link="cloglog"))
+summary(fit.3)
+
+dat2<-expand.grid(year=1:6, hises=c(0,1))
+dat2$fitted<-predict(fit.3, type = "response", newdata=dat)
+#plot the interaction with time
+plot(dat$year[dat$hises==0]-.5, dat$fitted[dat$hises==0], type="b", ylab="Hazard", ylim=c(0, max(t0$y, t1$y)), xlim=c(0,6), xlab="Year", col="red", main =c("Discrete time hazard model", "effect of Household SES"))
+points(dat$year[dat$hises==1]-.5, dat$fitted[dat$hises==1], type="b", col="blue")
+legend("topright", legend=c("LOW SES", "HIGH SES"), col=c("red", "blue"),lty=1)
+
+```
+I can't see **any** difference.
+
+#Using Longitudinal Data
+As in the other examples, I illustrate fitting these models to data that are longitudinal, instead of person-duration. In this example, we will examine how to fit the Cox model to a longitudinally collected data set. 
+```{r}
+load("~/Google Drive/dem7903_App_Hier/data/eclsk.Rdata")
+names(eclsk)<-tolower(names(eclsk))
+#get out only the variables I'm going to use for this example
+myvars<-c( "childid","gender", "race", "r1_kage","r3age", "r4age", "r5age", "r6age", "r7age", "wkpov_r","w1povrty","w3povrty", "w5povrty", "w8povrty","wkmomed","w1momed", "w3momed", "w5momed", "w8momed","s2_id", "c1_7fp0", "c17fpstr", "c17fppsu")
+eclsk<-eclsk[,myvars]
+
+
+eclsk$age1<-ifelse(eclsk$r1_kage==-9, NA, eclsk$r1_kage/12)
+eclsk$age2<-ifelse(eclsk$r3age==-9, NA, eclsk$r4age/12)
+#for the later waves, the NCES group the ages into ranges of months, so 1= <105 months, 2=105 to 108 months. So, I fix the age at the midpoint of the interval they give, and make it into years by dividing by 12
+eclsk$age3<-recode(eclsk$r5age,recodes="1=105; 2=107; 3=109; 4=112; 5=115; 6=117; -9=NA")/12
+eclsk$age4<-recode(eclsk$r7age,recodes="1=155; 2=166; 3=172; 4=178; 5=192; -9=NA")/12
+
+
+eclsk$pov1<-ifelse(eclsk$wkpov_r==1,1,0)
+eclsk$pov2<-ifelse(eclsk$w3povrty==1,1,0)
+eclsk$pov3<-ifelse(eclsk$w5povrty==1,1,0)
+eclsk$pov4<-ifelse(eclsk$w8povrty==1,1,0)
+
+
+#mother's education-time varying > hs ==1
+eclsk$momedu1<-recode(eclsk$wkmomed, recodes = "1:3=0; 4:9=1; else =NA") 
+eclsk$momedu2<-recode(eclsk$w3momed, recodes = "1:3=0; 4:9=1; else =NA") 
+eclsk$momedu3<-recode(eclsk$w5momed, recodes = "1:3=0; 4:9=1; else =NA") 
+
+
+#Recode race with white, non Hispanic as reference using dummy vars
+eclsk$hisp<-recode (eclsk$race, recodes="3:4=1;-9=NA; else=0")
+eclsk$black<-recode (eclsk$race, recodes="2=1;-9=NA; else=0")
+eclsk$asian<-recode (eclsk$race, recodes="5=1;-9=NA; else=0")
+eclsk$nahn<-recode (eclsk$race, recodes="6:7=1;-9=NA; else=0")
+eclsk$other<-recode (eclsk$race, recodes="8=1;-9=NA; else=0")
+eclsk$race_gr<-recode(eclsk$race, recodes="3:4='hisp'; 2='nh black'; 5='nh asian'; 6:7='nahn'; 8='other'; 1='nh white'; else=NA", as.factor.result = T)
+eclsk$race_gr<-relevel(eclsk$race_gr, ref = 'nh white')
+eclsk$male<-recode(eclsk$gender, recodes="1=1; 2=0; -9=NA")
+eclsk$mlths<-recode(eclsk$wkmomed, recodes = "1:2=1; 3:9=0; else = NA")
+eclsk$mgths<-recode(eclsk$wkmomed, recodes = "1:3=0; 4:9=1; else =NA") 
+```
+
+
+Now, I need to form the transition variable, this is my event variable, and in this case it will be 1 if a child enters poverty between the first wave of the data and the third grade wave, and 0 otherwise. **NOTE** I need to remove any children who are already in poverty age wave 1, because they are not at risk of experiencing **this particular** transition.
+```{r createevents}
+eclsk<-subset(eclsk, is.na(pov1)==F&is.na(pov2)==F&is.na(pov3)==F&is.na(age1)==F&is.na(age2)==F&is.na(age3)==F&pov1!=1&is.na(eclsk$c17fpstr)==F)
+#eclsk$povtran1<-ifelse(eclsk$pov1==0&eclsk$pov2==0, 0,1)
+#eclsk$povtran2<-ifelse(eclsk$povtran1==1, NA,ifelse(eclsk$pov2==0&eclsk$pov3==0,0,1))
+
+```
+
+Just as before, we reshape the data from the current "wide" format (repeated measures in columns) to a "long" format (repeated observations in rows). The `reshape()` function allows us to do this easily. It allows us to specify our repeated measures, time varying covariates as well as time-constant covariates.
+
+```{r reshape}
+head(eclsk)
+names(eclsk)
+e.long<-reshape(eclsk, idvar="childid", varying=list(age=c("age1","age2", "age3"), age2=c("age2", "age3", "age4"), momedu=c("momedu1", "momedu2", "momedu3")), times=1:3, direction="long" , drop = names(eclsk)[4:19])
+e.long<-e.long[order(e.long$childid, e.long$time),]
+head(e.long)
+#find which kids failed in the first time period and remove them from the second risk period risk set
+
+e.long$povtran[e.long$pov1==0&e.long$pov2==1&e.long$time==1]<-1
+e.long$povtran[e.long$pov2==0&e.long$pov3==1&e.long$time==2]<-1
+e.long$povtran[e.long$pov3==0&e.long$pov4==1&e.long$time==3]<-1
+
+e.long$povtran[e.long$pov1==0&e.long$pov2==0&e.long$time==1]<-0
+e.long$povtran[e.long$pov2==0&e.long$pov3==0&e.long$time==2]<-0
+e.long$povtran[e.long$pov3==0&e.long$pov4==0&e.long$time==3]<-0
+
+e.long$povtran[e.long$pov1==0&e.long$pov2==1&e.long$time==2]<-NA
+e.long$povtran[e.long$pov1==0&e.long$pov2==1&e.long$time==3]<-NA
+e.long$povtran[e.long$pov2==0&e.long$pov3==1&e.long$time==1]<-NA
+e.long$povtran[e.long$pov2==0&e.long$pov3==1&e.long$time==3]<-NA
+
+
+#find which kids failed in the first time period and remove them from the second risk period risk set
+failed1<-which(is.na(e.long$povtran)==T)
+e.long<-e.long[-failed1,]
+e.long$age1r<-round(e.long$age1, 0)
+e.long$age2r<-round(e.long$age2, 0)
+
+head(e.long[, c("childid", "pov1", "pov2", "pov3", "pov4", "time", "povtran")], n=30)
+```
+
+
+Now we fit the discrete time model using full survey design. In the ECLS-K, I use the longitudinal weight for waves 1-5, as well as the associated psu and strata id's for the longitudinal data from these waves from the parents of the child, since no data from the child themselves are used in the outcome.
+
+```{r fitmodel}
+options(survey.lonely.psu = "adjust")
+des2<-svydesign(ids = ~c17fppsu, strata = ~c17fpstr, weights=~c1_7fp0, data=e.long[complete.cases(e.long),], nest=T)
+
+#Fit the model
+fitl1<-svyglm(povtran~as.factor(time)+momedu1+race_gr-1, design=des2, family=binomial)
+summary(fitl1) 
+
+dat3<-expand.grid(time=c(1,2,3),momedu1=c(0,1), race_gr=levels(des2$variables$race_gr))
+#unfortunately, expand.grid makes some unrealistic cases sometimes, get rid of those.
+
+dat3$fitted<-predict(fitl1, dat3, type="response")
+dat3
+```
+
+Do some plots, these aren't very cool, since there is only 2 time periods.
+
+```{r, fig.height=8, fig.width=8}
+plot(fitted~time, dat3[dat3$momedu1==0&dat3$race_gr=="nh white",], type="l",
+     ylim=c(min(dat3$fitted), .4),
+     ylab="h(t)", xlab="Wave", lwd=3)
+lines(fitted~time, dat3[dat3$momedu1==1&dat3$race_gr=="nh white",], col=1, lty=2, lwd=3)
+lines(fitted~time, dat3[dat3$momedu1==0&dat3$race_gr=="nh black",], col=2, lwd=3)
+lines(fitted~time, dat3[dat3$momedu1==1&dat3$race_gr=="nh black",], col=2, lty=2, lwd=3)
+lines(fitted~time, dat3[dat3$momedu1==0&dat3$race_gr=="hisp",], col=3, lwd=3)
+lines(fitted~time, dat3[dat3$momedu1==1&dat3$race_gr=="hisp",], col=3, lty=2, lwd=3)
+lines(fitted~time, dat3[dat3$momedu1==0&dat3$race_gr=="nahn",], col=4, lwd=3)
+lines(fitted~time, dat3[dat3$momedu1==1&dat3$race_gr=="nahn",], col=4, lty=2, lwd=3)
+lines(fitted~time, dat3[dat3$momedu1==0&dat3$race_gr=="nh asian",], col=5, lwd=3)
+lines(fitted~time, dat3[dat3$momedu1==1&dat3$race_gr=="nh asian",], col=5, lty=2, lwd=3)
+
+legend("topright", legend=c("NH White, HS Edu", "NH White, LT HS Edu", "NH Black, HS Edu", "NH Black, LT HS Edu","Hisp, HS Edu", "Hisp, LT HS Edu","NAHN, HS Edu", "NAHN, LT HS Edu","NH Asian, HS Edu", "NH Asian, LT HS Edu"), col=c(1,1,2,2,3,3,4,4,5,5), lty=rep(c(1,2), 5), cex=.75)
+title(main="Hazard of Transitioning into Poverty")
+
+```
+

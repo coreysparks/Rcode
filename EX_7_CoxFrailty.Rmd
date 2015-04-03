@@ -1,0 +1,299 @@
+---
+title: "Event History Analysis - Example 7 Frailty in the Cox model"
+author: "coreysparks"
+date: "February 4, 2015"
+output:
+  html_document:
+    fig_height: 6
+    fig_width: 6
+---
+
+This example will illustrate how to fit the extended Cox Proportional hazards model with Gaussian frailty to continuous duration data (i.e. person-level data) and a discrete-time (longitudinal) data set. In this example, I will use the event of a child dying before age 5 in Haiti. The data for this example come from the Haitian [Demographic and Health Survey for 2012](http://dhsprogram.com/data/dataset/Haiti_Standard-DHS_2012.cfm?flag=0) birth recode file. This file contains information for all live births to women sampled in the survey.
+
+The longitudinal data example uses data from the [ECLS-K ](http://nces.ed.gov/ecls/kinderdatainformation.asp). Specifically, we will examine the transition into poverty between kindergarten and third grade. 
+
+
+```{r load}
+#Load required libraries
+library(foreign)
+library(survival)
+library(car)
+library(survey)
+library(coxme)
+
+#load the data
+haiti<-read.dta("/Users/ozd504/Google Drive/dem7223/data/HTBR61FL.DTA", convert.factors = F)
+```
+
+
+```{r extract_data}
+#We form a subset of variables
+sub<-data.frame(CASEID=haiti$caseid,v008=haiti$v008,bord=haiti$bidx,csex=haiti$b4,b2=haiti$b2, b3=haiti$b3, b5=haiti$b5, b7=haiti$b7, ibint=haiti$b11, rural=haiti$v025, educ=haiti$v106,age=haiti$v012,partneredu=haiti$v701,partnerage=haiti$v730, hhses=haiti$v190, weight=haiti$v005/1000000, psu=haiti$v021, strata=haiti$v022, region=haiti$v023)
+
+sub$death.age<-ifelse(sub$b5==1,
+                          ((((sub$v008))+1900)-(((sub$b3))+1900)) 
+                          ,sub$b7)
+
+#censoring indicator for death by age 5, in months (<=60 months)
+sub$d.event<-ifelse(is.na(sub$b7)==T|sub$b7>60,0,1)
+sub$d.eventfac<-factor(sub$d.event); levels(sub$d.eventfac)<-c("Alive at Age 5", "Dead by Age 5")
+table(sub$d.eventfac)
+
+#recodes
+sub$male<-ifelse(sub$csex==1,1,0)
+sub$educ.high<-ifelse(sub$educ %in% c(2,3), 1, 0)
+sub$age2<-sub$age^2
+sub$partnerhiedu<-ifelse(sub$partneredu<3,0,ifelse(sub$partneredu%in%c(8,9),NA,1 ))
+sub$region_name<-recode(sub$region, recodes = "1='Aire Metropolitaine';2='Reste-Ouest';3='Sud-Est';4='Nord'; 5='Nord-Est'; 6='Artibonite'; 7='Centre'; 8='Sud'; 9='Grand Anse';10='Nord-Ouest';11='Nippes';12='Camp' ", as.factor.result=T)
+sub$region_num<-ifelse(sub$region==12, NA, sub$region)
+```
+
+###Fit the ordinary Cox model
+Here I fit the ordinary Cox model without frailty, just for comparison sake. 
+
+```{r model}
+#using coxph in survival library
+fit.cox2<-coxph(Surv(death.age, d.event)~bord+male+educ.high+I(age/5)+I(hhses>3), data=sub, weights=weight)
+summary(fit.cox2)
+plot(survfit(fit.cox2),  ylim=c(.8,1), xlim=c(0,60), ylab="S(t)", xlab="Age in Months")
+title(main="Survival Function for Child Mortality")
+```
+
+#Fit the Cox model with frailty at the regional level
+
+The `coxme()` function in the `coxme` library [Link](http://cran.r-project.org/web/packages/coxme/index.html) will fit the Cox model with shared frailty, assuming a Gaussian frailty term. The model would look like:
+
+$h_j (t) = h_{0j} e^{(x'\beta + u_j)}$
+
+where
+
+$u_j \sim N(0, \sigma^2)$
+
+is a Normally distributed random effect, identical for each person in the jth group. This term raises or lowers the average hazard function the same way for each person within each group, but allows the overall risk for people in different groups to be different. This would be considered to be a random intercept model, if we were considering an ordinary linear or genearlized linear model. 
+```{r}
+
+fit.cox.f<-coxme(Surv(death.age, d.event)~bord+male+educ.high+I(age/5)+I(hhses>3)+(1|region_name), data=sub, weights=weight)
+summary(fit.cox.f)
+
+```
+
+This gives us the variance in child mortality by region, which is honestly pretty substantial. We can use a likelihood ratio test to see if the frailty model is significantly better than the ordinary Cox model:
+
+```{r}
+anova(fit.cox.f, fit.cox2)
+AIC(fit.cox.f)
+AIC(fit.cox2)
+```
+
+Which it is, and this is supported by the AIC difference between the two models of `r round(AIC(fit.cox2)-AIC(fit.cox.f), 2)` points.
+
+So, what are the frailties in this case? We can get those from the `frail` portion of the model structure:
+```{r}
+fit.cox.f$frail
+```
+
+Which shows the region `r names(which.max(unlist(fit.cox.f$frail)))` has the highest frailty, which means that the average level of childhood mortality is highest in that region, while the lowest frailty is in `r names(which.min(unlist(fit.cox.f$frail)))` .  This is nice, but wouldn't it look nice to map these?
+
+```{r, fig.height=8, fig.width=9}
+library(maptools)
+htshp<-readShapePoly("~/Google Drive/dem7223/data/sdr_subnational_data_2015-03-18/shps/sdr_subnational_data_dhs_2012.shp")
+plot(htshp)
+text(getSpPPolygonsLabptSlots(htshp), labels=as.character(htshp$DHSREGFR), cex=0.6)
+
+#Since the region variable in the shapefile doesn't include two of the areas, I need to make them an ID number:
+htshp$reg_merge<-ifelse(htshp$DHSREGFR=="Aire Métropolitaine", 1, ifelse(htshp$DHSREGFR=="Reste-Ouest",2, htshp$REGCODE+1))
+htshp$reg_merge
+
+#make a data frame to hold the frailties, and the accompanying ID numbers
+frail<-data.frame(frail=exp(unlist(fit.cox.f$frail)), region=c(1,6, 12, 7, 9, 11, 4, 5, 10, 2, 8, 3), regname=gsub(names(unlist(fit.cox.f$frail)), pattern = "region_name.", replacement = ""))
+frail
+
+#just check the names are the same
+htshp@data[, c("DHSREGFR", "reg_merge")]
+
+#merge the shapefile's data frame to the frailties
+mdat<-htshp@data
+mdat<-merge(mdat, frail, by.x="reg_merge", by.y="region", all.x=T, sort=F)
+
+#stick it back on the shapefile
+htshp@data<-mdat
+
+library(sp)
+library(RColorBrewer)
+brks<-quantile(htshp$frail); brks[1]<-brks[1]-.1; brks[5]<-brks[5]+.1
+rownames(htshp@data)<-as.character(htshp$DHSREGFR)
+
+
+sp.label <- function(x, label) {
+    list("sp.text", coordinates(x), label)
+}
+
+ISO.sp.label <- function(x) {
+    sp.label(x, row.names(x@data["frail"]))
+}
+
+make.ISO.sp.label <- function(x) {
+    do.call("list", ISO.sp.label(x))
+}
+
+spplot(htshp,"frail",at=brks, col.regions=brewer.pal(n=4,"RdBu" ), sp.layout = make.ISO.sp.label(htshp), main="Frailty Values for Haitian Regions")
+
+```
+
+Which shows the highest and lowest frailty areas, including the area of Port-au-Prince, in dark blue to the south, called "Aire Métropolitaine". 
+
+###Random slopes
+If we were interested in whether a predictor variable had heterogeneous effects across the various groups within our data, we could include that in our model as well, and we would have effectively a random slope model:
+
+$h_j (t) = h_{0j} e^{(x'\beta + u_j+\gamma_j 'x)}$
+
+where $\gamma_j$ is a group-specific effect of a particular predictor variable, and these two random effects will be distributed as:
+
+$$ \left[\begin{array}
+{rrr}
+u_j \\
+\gamma_j
+\end{array}\right] \sim MVN(0, \Sigma)
+$$
+```{r}
+#See if higher birth order children face equal disadvantage in all regions
+fit.cox.f2<-coxme(Surv(death.age, d.event)~bord+male+educ.high+I(age/5)+I(hhses>3)+(1+bord|region_name), data=sub, weights=weight)
+summary(fit.cox.f2)
+
+anova(fit.cox.f, fit.cox.f2)
+```
+
+And it looks like there is significant variation in this effect, because the model with the additional term fits the data significantly better than the model with only the random "intercept". What does this effect look like?
+
+```{r, echo=FALSE, }
+
+htshp<-readShapePoly("~/Google Drive/dem7223/data/sdr_subnational_data_2015-03-18/shps/sdr_subnational_data_dhs_2012.shp")
+
+#Since the region variable in the shapefile doesn't include two of the areas, I need to make them an ID number:
+htshp$reg_merge<-ifelse(htshp$DHSREGFR=="Aire Métropolitaine", 1, ifelse(htshp$DHSREGFR=="Reste-Ouest",2, htshp$REGCODE+1))
+
+
+#make a data frame to hold the frailties, and the accompanying ID numbers
+frail<-data.frame(frail=exp(fit.cox.f2$coefficients["bord"]+fit.cox.f2$frail[[1]][,2]), region=c(1,6, 12, 7, 9, 11, 4, 5, 10, 2, 8, 3), regname=gsub(names(unlist(fit.cox.f$frail)), pattern = "region_name.", replacement = ""))
+
+
+#merge the shapefile's data frame to the frailties
+mdat<-htshp@data
+mdat<-merge(mdat, frail, by.x="reg_merge", by.y="region", all.x=T, sort=F)
+
+#stick it back on the shapefile
+htshp@data<-mdat
+
+brks<-quantile(htshp$frail); brks[1]<-brks[1]-.1; brks[5]<-brks[5]+.1
+rownames(htshp@data)<-as.character(htshp$DHSREGFR)
+
+
+sp.label <- function(x, label) {
+    list("sp.text", coordinates(x), label)
+}
+
+ISO.sp.label <- function(x) {
+    sp.label(x, row.names(x@data["frail"]))
+}
+
+make.ISO.sp.label <- function(x) {
+    do.call("list", ISO.sp.label(x))
+}
+
+```
+
+```{r, fig.height=8, fig.width=9}
+spplot(htshp,"frail",at=brks, col.regions=brewer.pal(n=4,"Reds" ), sp.layout = make.ISO.sp.label(htshp), main="Random Slopes for Birth Order for Haitian Regions")
+
+```
+
+And we basically see that the birth order vaiable has stronger negative effects (higher hazards), generally in the southern portions of the country.
+
+
+
+#Using Longitudinal Data
+As in the other examples, I illustrate fitting these models to data that are longitudinal, instead of person-duration. In this example, we will examine how to fit the Cox model to a longitudinally collected data set. 
+
+First we load our data
+```{r load_longdata}
+load("~/Google Drive/dem7903_App_Hier/data/eclsk.Rdata")
+names(eclsk)<-tolower(names(eclsk))
+#get out only the variables I'm going to use for this example
+myvars<-c( "childid","gender", "race", "r1_kage","r4age", "r5age", "r6age", "r7age","c1r4mtsc", "c4r4mtsc", "c5r4mtsc", "c6r4mtsc", "c7r4mtsc", "w1povrty","w1povrty","w3povrty", "w5povrty", "w8povrty","wkmomed", "s2_id", "c1_5fp0", "c15fpstr", "c15fppsu")
+eclsk<-eclsk[,myvars]
+
+
+eclsk$age1<-ifelse(eclsk$r1_kage==-9, NA, eclsk$r1_kage/12)
+eclsk$age2<-ifelse(eclsk$r4age==-9, NA, eclsk$r4age/12)
+#for the later waves, the NCES group the ages into ranges of months, so 1= <105 months, 2=105 to 108 months. So, I fix the age at the midpoint of the interval they give, and make it into years by dividing by 12
+eclsk$age3<-recode(eclsk$r5age,recodes="1=105; 2=107; 3=109; 4=112; 5=115; 6=117; -9=NA")/12
+
+eclsk$pov1<-ifelse(eclsk$w1povrty==1,1,0)
+eclsk$pov2<-ifelse(eclsk$w3povrty==1,1,0)
+eclsk$pov3<-ifelse(eclsk$w5povrty==1,1,0)
+
+#Recode race with white, non Hispanic as reference using dummy vars
+eclsk$hisp<-recode (eclsk$race, recodes="3:4=1;-9=NA; else=0")
+eclsk$black<-recode (eclsk$race, recodes="2=1;-9=NA; else=0")
+eclsk$asian<-recode (eclsk$race, recodes="5=1;-9=NA; else=0")
+eclsk$nahn<-recode (eclsk$race, recodes="6:7=1;-9=NA; else=0")
+eclsk$other<-recode (eclsk$race, recodes="8=1;-9=NA; else=0")
+eclsk$male<-recode(eclsk$gender, recodes="1=1; 2=0; -9=NA")
+eclsk$mlths<-recode(eclsk$wkmomed, recodes = "1:2=1; 3:9=0; else = NA")
+eclsk$mgths<-recode(eclsk$wkmomed, recodes = "1:3=0; 4:9=1; else =NA") 
+```
+
+
+Now, I need to form the transition variable, this is my event variable, and in this case it will be 1 if a child enters poverty between the first wave of the data and the third grade wave, and 0 otherwise. **NOTE** I need to remove any children who are already in poverty age wave 1, because they are not at risk of experiencing **this particular** transition.
+```{r createevents}
+eclsk<-subset(eclsk, is.na(pov1)==F&is.na(pov2)==F&is.na(pov3)==F&is.na(age1)==F&is.na(age2)==F&is.na(age3)==F&pov1!=1&is.na(eclsk$c15fpstr)==F)
+eclsk$povtran1<-ifelse(eclsk$pov1==0&eclsk$pov2==0, 0,1)
+eclsk$povtran2<-ifelse(eclsk$povtran1==1, NA,ifelse(eclsk$pov2==0&eclsk$pov3==0,0,1))
+
+```
+
+Now we do the entire data set. To analyze data longitudinally, we need to reshape the data from the current "wide" format (repeated measures in columns) to a "long" format (repeated observations in rows). The `reshape()` function allows us to do this easily. It allows us to specify our repeated measures, time varying covariates as well as time-constant covariates.
+
+```{r reshape}
+#make an id that is the combination of state and strata 
+eclsk$sampleid<-paste(eclsk$c15fpstr, eclsk$c15fppsu)
+#within each sampling unit, sum the weights
+wts<-tapply(eclsk$c1_5fp0,eclsk$sampleid,sum)
+#make a data frame from this
+wts<-data.frame(id=names(unlist(wts)), wt=unlist(wts))
+#get the unique sampling location ids'
+t1<-as.data.frame(table(eclsk$sampleid))
+#put all of this into a data set
+wts2<-data.frame(ids=wts$id, sumwt=wts$wt, jn=t1$Freq)
+#merge all of this back to the original data file
+eclsk2<-merge(eclsk, wts2, by.x="sampleid", by.y="ids", all.x=T)
+#In the new data set, multiply the original weight by the fraction of the
+#sampling unit total population each person represents
+eclsk2$swts<-eclsk2$c1_5fp0*(eclsk2$jn/eclsk2$sumwt)
+
+
+
+e.long<-reshape(eclsk2, idvar="childid", varying=list(age=c("age1","age2"), age2=c("age2", "age3"), povtran=c("povtran1", "povtran2")), times=1:2, direction="long" , drop = names(eclsk)[4:20])
+e.long<-e.long[order(e.long$childid, e.long$time),]
+
+#find which kids failed in the first time period and remove them from the second risk period risk set
+failed1<-which(is.na(e.long$povtran1)==T)
+e.long<-e.long[-failed1,]
+e.long$age1r<-round(e.long$age1, 0)
+e.long$age2r<-round(e.long$age2, 0)
+head(e.long, n=10)
+```
+
+
+Now we fit the Cox model and doing fraily by the sample strata (to mimic the sample design). I use the weights calculated above, standardized to the within cluster sample size.
+
+```{r fitmodel}
+
+#Fit the model
+fitl1<-coxme(Surv(time = age1r, time2 = age2r, event = povtran1)~mlths+mgths+black+hisp+other+nahn+(1|sampleid), e.long)
+summary(fitl1) 
+
+
+```
+
+
