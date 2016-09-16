@@ -1,0 +1,1369 @@
+---
+title: "Spatial Analysis Workshop - Code Examples - Social Science Consortium"
+author: "Corey S. Sparks, Ph.D."
+date: September 17, 2016
+output:
+  html_document: 
+    number_sections: yes
+    toc: yes
+---
+
+
+
+Examples of (E)SDA Items:
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE}
+library(spdep)
+library(maptools)
+library(RColorBrewer)
+library(classInt)
+library(nortest)
+library(lmtest)
+library(car)
+library(ggplot2)
+library(GGally)
+library(htmlTable)
+library(spgwr)
+setwd("~/Google Drive/a&m_stuff//")
+
+dat<-readShapePoly("SA_classdata.shp", proj4string=CRS("+proj=utm +zone=14 +north"))
+
+dat$decade<-cut(dat$MEDYRBLT, breaks = 4)
+```
+
+**Histograms**
+
+```{r}
+qplot(dat$ppersonspo, geom="histogram", binwidth=.05)
+```
+
+
+**Boxplots**
+
+```{r}
+ggplot(dat@data, aes(x=decade, y=PHISPANIC))+ geom_boxplot()
+```
+
+Boxplot of %Hispanic in a census tract, by median year homes were built in San Antonio, TX
+
+**Scatter plots**
+Scatterplots show bivariate relationships
+This can give you a visual indication of an association between two variables
+Positive association (positive correlation)
+Negative association (negative correlation)
+Also allows you to see potential outliers (abnormal observations) in the data
+
+```{r}
+qplot(y = dat$ppersonspo, x=dat$PHISPANIC)
+```
+Scatterplot of %Hispanic in a census tract, by % in poverty, in San Antonio, TX
+
+
+**Parallel coordinate plots**
+Parallel coordinate plots allow for visualization of the association between multiple variables (multivariate)
+Each variable is plotted according to its “coordinates” or values
+
+```{r}
+ggparcoord(data=dat@data, columns = c("ppersonspo", "PHISPANIC", "PWHITE"), groupColumn = "MEDHHINC", order = "allClass", scale="uniminmax")
+```
+
+Parallel coordinate plot of %in poverty, %White and %Hispanic, in San Antonio, TX, shaded by the median household income of the tract.
+
+
+**Measuring Spatial Autocorrelation**
+If we observe data Z(s) (an attribute) at location i, and again at location j
+The spatial autocorrelation between $Z(s)_i$ and $Z(s)_j$ is degree of similarity between them, measured as the standardized covariance between their locations and values.
+In the absence of spatial autocorrelation the locations of $Z(s)_i$ and $Z(s)_j$ has nothing to do with the values of $Z(s)_i$ and $Z(s)_j$
+OTOH, if autocorrelation is present, close proximity of $Z(s)_i$ and $Z(s)_j$ leads to close values of their attributes.
+
+Positive autocorrelation
+This means that a feature is positively associated with the values of the surrounding area (as defined by the spatial weight matrix), high values occur with high values, and low with low
+
+Negative autocorrelation
+This means that a feature is negatively associated with the values of the surrounding area (as defined by the spatial weight matrix), high with low, low with high
+The (probably) most popular global autocorrelation statistic is Moran’s I:
+
+$I = \frac{n}{(n - 1)\sigma^2 w_{..}}  \sum^i_n \sum^j_n w_{ij} (Z(s_i) - \bar Z)(Z(s_j) - \bar Z)$
+
+with $Z(s)_i$ being the value of the attribute at location i,  $Z(s)_j$ being the value of the attribute at location j, $\sigma^2$ is sample variance, $w_{ij}$ is the weight for location *ij* (0 if they are not neighbors, 1 otherwise). 
+
+If I is greater than E(I), there is global positive autocorrelation, if I is less than E(I), there is global negative autocorrelation.  Where E(I) is the expected value of I. 
+
+$E(I)=-\frac{1}{n-1}$
+
+**Moran's I Scatterplot**
+It is sometimes useful to visualize the relationship between the actual values of the dependent variable and their lagged values. This is the so called
+Moran scatterplot
+Lagged values are the average value of the surrounding neighborhood around location i
+lag(Z) = $z_{ij} * w_{ij}$ = $z'W$ in matrix terms
+The Moran scatterplot shows the association between the observation of interest and its neighborhood's average value. The variables are generally plotted as z-scores,to avoid scaling issues. 
+
+**Moran Scatter plot for San Antonio Poverty Rates**
+
+Here is the overall poverty rate map for San Antonio, the Global Moran's I was .655.
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE}
+#Make a rook style weight matrix
+sanb<-poly2nb(dat, queen=F)
+#summary(sanb)
+salw<-nb2listw(sanb, style="W")
+#the style = W row-standardizes the matrix
+
+#generate locally weighted values
+wmat<-nb2mat(sanb, style="W")
+
+spplot(dat, "ppersonspo", at=quantile(dat$ppersonspo, p=c(0, .25, .5, .75, 1)), col.regions=brewer.pal(n=4, "Greys"))
+
+```
+
+And here we show the Moran scatterplot:
+
+```{r}
+#Moran Scatter plot
+moran.plot(as.numeric(scale(dat$ppersonspo)), listw=salw, xlab="Poverty Rate", ylab="Lagged Poverty Rate", main=c("Moran Scatterplot for Poverty", "in San Antonio. I=.655") )
+
+```
+
+Moran's I is basically a correlation *think Pearson's $\rho$ on a variable and a *spatially lagged* version of itself. Spatial lags of a variable are done via multiplying the variable through the spatial weight matrix for the data.
+
+If we have a value $Z(s_i)$ at location i and a spatial weight matrix $w_{ij}$ describing the spatial neighborhood around location i, we can find the
+lagged value of the variable by:
+$WZ_i = Z(s_i) * w_{ij}$
+
+This calculates what is effectively, the neighborhood average value in locations around location i, often stated $Z(s_{-i})$
+
+Again, if we had the adjacency matrix from above, a *Rook-based* adjacency weight matrix. 
+
+$$
+w_{ij} = \begin{bmatrix}
+0 & 1 & 1 & 0\\ 
+1 & 0 & 0 & 1 \\ 
+1 & 0 &  0& 1\\ 
+ 0&  1& 1 & 0
+\end{bmatrix}
+$$
+
+Typically this matrix is standardized, by dividing each element of $w_{ij}$ by the number of neighbors, this is called *row-standardized*:
+
+$$
+w_{ij} = \begin{bmatrix}
+0 & .5 & .5 & 0\\ 
+.5 & 0 & 0 & .5 \\ 
+.5 & 0 &  0& .5\\ 
+ 0&  .5& .5 & 0
+\end{bmatrix}
+$$
+
+and a variable z, equal to:
+
+$$z=\begin{bmatrix}
+1 & 2 & 3 & 4
+\end{bmatrix}$$
+
+When we form the product: $z'W$, we get:
+
+$$z_{lag}=\begin{bmatrix}
+3.5 & 3 & 3 & 3.5
+\end{bmatrix}$$
+
+Which, now we see where we get the *y-value* of the moran scatterplot. It is just the lagged version of the original variable.
+
+**Bivariate Moran Plots**
+The so-called *bivariate Moran* statistic, is just the correlation of a lagged variable, y, with another variable, x. An example from San Antonio, is a bivariate Moran analysis of Poverty and Crime rates.
+
+```{r, echo=FALSE , warning=FALSE}
+#Make a rook style weight matrix
+sanb<-poly2nb(dat, queen=F)
+#summary(sanb)
+salw<-nb2listw(sanb, style="B")
+
+lagy=lag.listw(as.numeric(scale(dat$prop3yr)), x = salw)
+x=as.numeric(scale(dat$ppersonspo))
+
+plot(lagy~x, ylab="Lagged Property Crime Rate", xlab="Poverty Rate", main=c("Moran Scatterplot for Property Crime ", " and Poverty in San Antonio. I=.12") )
+abline(h = 0, v=0, lty=2)
+cor(lagy, x)
+abline(a=0, b=.128, col=2, lwd=1.5)
+```
+
+Which is a pretty low correlation (I = .125). This shows slight positive autocorrelation, meaning that areas with higher crime rates typically surround areas with higher poverty rates. 
+
+**Local Moran's I**
+So far, we have only seen a *Global* statistic for autocorrelation, and this tells us if there is any *overall* clustering in our data. We may be more interested in *where* the autocorrelation occurs, or where *clusters* are located. A local version of the Moran statistic is avaialble as well. This basically calculates the Moran statistic from above, but only for the *local neighborhood*. It compares the observation's value to the local neighborhood average, instead of the global average. Anselin ([1995](http://dces.wisc.edu/wp-content/uploads/sites/30/2013/08/W4_Anselin1995.pdf)) referred to this as a "**LISA**" statistic, for Local Indicator of Spatial Autocorrelation.
+
+Here is a LISA map for clusters of poverty in San Antonio:
+![LISA](/Users/ozd504/Google Drive/dem7263/Rcode15/images/locali.png)
+
+which shows areas of low poverty clustering in blue, and high poverty clustering in red. These are so-called *clusters*, becuase they are areas with higher (or lower, for the blues) than average poverty rates, surrounded by areas with with higher than average poverty rates. The red clusters are so called "high-high clusters", likewise the blue areas are called "low-low clusters".  We also see light pink and light blue polygons. The light pink polygons represent areas that have high poverty rates, but are in a low poverty spatial neighborhood, and are called high-low outliers. The one in the the northwest part of San Antonio is a good example, because it's the UTSA main campus, a student ghetto, if you will.
+
+Likewise, the light blue polygons, are called low-high outliers, becuase they have low poverty rates, but are in a high poverty spatial neighborhood. 
+
+
+**What these methods tell you**
+* Moran's I is a _descriptive statistic ONLY_, 
+* It simply indicates if there is spatial association/autocorrelation in a variable
+* Local Moran's I tells you if there is significant localized clustering of the variable
+
+
+# Empirical Example
+Geoda is very adept at doing this stuff, but alas, it's point and click. Coding means you have something to come back to when you want to do the same job again, meaning your research is *reproducible*. What if you click the wrong button next time? 
+
+First we load some libraries we need and the data, which is stored in an ESRI shapefile. All data can be found on [Github](https://github.com/coreysparks/data/blob/master/SA_classdata.zip?raw=true). 
+
+```{r, warning=FALSE}
+library(spdep)
+library(maptools)
+library(RColorBrewer)
+library(classInt)
+dat<-readShapePoly("SA_classdata.shp", proj4string=CRS("+proj=utm +zone=14 +north"))
+
+#create a mortality rate, 3 year average
+dat$mort3<-apply(dat@data[, c("deaths09", "deaths10", "deaths11")],1,sum)
+dat$mortrate<-1000*dat$mort3/dat$acs_poptot
+
+#get rid of tracts with very low populations
+dat<-dat[which(dat$acs_poptot>100),]
+
+#Show a basic quantile map of the mortality rate
+spplot(dat, "mortrate",
+       main="Mortality Rate, 3 Year Avg, 2009-2011",
+       at=quantile(dat$mortrate), 
+       col.regions=brewer.pal(n=5, "Blues"))
+
+#Make a rook style weight matrix
+sanb<-poly2nb(dat, queen=F)
+summary(sanb)
+salw<-nb2listw(sanb, style="W")
+#the style = W row-standardizes the matrix
+
+#make a k-nearest neighbor weight set, with k=3
+knn<-knearneigh(x = coordinates(dat), k = 3)
+knn3<-knn2nb(knn = knn)
+
+#Visualize the neighbors
+plot(dat, main="Rook Neighbors")
+plot(salw, coords=coordinates(dat), add=T, col=2)
+
+plot(dat, main="k=3 Neighbors")
+plot(knn3, coords=coordinates(dat), add=T, col=2)
+
+
+#generate locally weighted values
+wmat<-nb2mat(sanb, style="W")
+dat$mort.w<-wmat%*%(dat$mortrate)
+
+#plot the raw mortality rate and the spatiallly averaged rate.
+spplot(dat, c("mortrate", "mort.w"),
+       at=quantile(dat$mortrate), 
+       col.regions=brewer.pal(n=5, "Blues"),
+       main="Mortality Rate, 3 Year Avg, 2009-2011")
+
+
+#Calculate univariate moran's I for the mortality rate
+moran.test(dat$mortrate, listw=salw)
+moran.mc(dat$mortrate, listw=salw, nsim=999)
+
+#Moran Scatter plot
+moran.plot(dat$mortrate, listw=salw)
+
+#Local Moran Analysis
+locali<-localmoran(dat$mortrate, salw, p.adjust.method="fdr")
+dat$locali<-locali[,1]
+dat$localp<-locali[,5]
+
+#We have to make our own cluster identifiers
+dat$cl<-as.factor(ifelse(dat$localp<=.05,"Clustered","NotClustered"))
+
+#Plots of the results
+spplot(dat, "locali", main="Local Moran's I", at=quantile(dat$locali), col.regions=brewer.pal(n=4, "RdBu"))
+spplot(dat, "cl", main="Local Moran Clusters", col.regions=c(2,0))
+
+#Local Getis-Org G analysis
+localg<-localG(dat$mortrate, salw)
+dat$localg<-as.numeric(localg)
+
+#Plots
+spplot(dat, "localg", main="Local Geary's G", at=c(-4, -3,-2,-1,0,1,2,3, 4), col.regions=brewer.pal(n=8, "RdBu"))
+```
+
+#Introduction to Spatial Regression Models
+Up until now, we have been concerned with describing the structure of spatial data through correlational, and the methods of [exploratory spatial data analysis](http://rpubs.com/corey_sparks/105700).
+
+Through ESDA, we examined data for patterns and using the Moran I and Local Moran I statistics, we examined clustering of variables.
+Now we consider regression models for continuous outcomes. We begin with a review of the Ordinary Least Squares model for a continuous outcome.
+
+##OLS Model
+The basic OLS model is an attempt to estimate the effect of an independent variable(s) on the value of a dependent variable.  This is written as:
+$y_i = \beta_0 + \beta_1 * x_i + e_i$
+
+where y is the dependent variable that we want to model, x is the independent variable we think has an association with y, $\beta_0$ is the model intercept, or grand mean of y, when x = 0, and $\beta_1$ is the slope parameter that defines the strength of the linear relationship between x and y. e is the error in the model for y that is unaccounted for by the values of x and the grand mean $\beta_0$. The average, or expected value of y is : $E[y|x] = \beta_0 + \beta_1 * x_i$, which is the linear mean function for y, conditional on x, and this gives us the customary linear regression plot:
+
+```{r }
+set.seed(1234)
+x<- rnorm(100, 10, 5)
+beta0<-1
+beta1<-1.5
+y<-beta0+beta1*x+rnorm(100, 0, 5)
+
+plot(x, y)
+abline(coef = coef(lm(y~x)), lwd=1.5)
+summary(lm(y~x))$coef
+```
+
+Where, the line shows $E[y|x] = \beta_0 + \beta_1 * x_i$
+
+We assume that the errors, $e_i \sim N(0, \sigma^2)$ are independent, Normally distributed and homoskdastic, with variances $\sigma^2$. 
+
+This is the simple model with one predictor.  We can easily add more predictors to the equation and rewrite it:
+$y = \beta_0 + \sum^k \beta_k * x_{ik} + e_i$
+
+So, now the mean of y is modeled with multiple x variables. We can write this relationship more compactly using matrix notation:
+
+$Y =    X ' \beta +  e$
+
+Where Y is now a $n*1$ vector of observations of our dependent variable, X is a $n*k$ matrix of independent variables, with the first column being all 1’s and e is the $n*1$ vector of errors for each observation.
+
+In matrices this looks like:
+$$y = \begin{bmatrix}
+y_1 \\ y_2 \\ \vdots \\ y_n 
+\end{bmatrix}$$
+
+$$\beta = \begin{bmatrix}
+\beta_0   \\ \beta_1 \\ \vdots \\ \beta_k 
+\end{bmatrix}$$
+
+$$x=\begin{bmatrix}
+1 & x_{1,1} & x_{1,2}  & \dots  & x_{1, k}\\ 
+1 & x_{2,1} & x_{1,2}  & \dots  & x_{1, k} \\ 
+1 &\vdots & \vdots & \vdots & \vdots \\
+1 & x_{n,1} & x_{n,2}  & \dots  & x_{n, k} 
+\end{bmatrix}$$
+
+$$ e  = \begin{bmatrix}
+e_1 \\ e_2 \\ \vdots \\ e_n 
+\end{bmatrix}$$
+
+The residuals are uncorrelated, with covariance matrix $\Sigma$ = 
+
+$$ \Sigma = \sigma^2 I = \sigma^2 * \begin{bmatrix}
+1 & 0 & 0  & \dots  & 0\\ 
+0 & 1 & 0  & \dots  & 0 \\ 
+0 & \vdots & \vdots & \dots & \vdots \\
+0 & 0 & 0  & \dots  & 1 
+\end{bmatrix} = \begin{bmatrix}
+\sigma^2 & 0 & 0  & \dots  & 0\\ 
+0 & \sigma^2 & 0  & \dots  & 0 \\ 
+0 & \vdots & \vdots & \dots & \vdots \\
+0 & 0 & 0  & \dots  & \sigma^2
+\end{bmatrix}$$
+
+To estimate the $\beta$ coefficients, we use the customary OLS estimator
+$\beta = (X'X)^{-1} (X' Y)$
+
+this is the estimator that minimizes the residual sum of squares:
+$(Y - X ' \beta)' (Y - X' \beta)$
+
+or 
+
+$(Y - \hat Y)' (Y - \hat Y)$
+
+We can inspect the properties of the estimates by examining the residuals, or $e_i$ of the model.  Since we assume the data are normal, a quantile-quantile (Q-Q) plot of the residuals against the expected quantile of the standard normal distribution should be a straight line. Formal tests of normality can also be used.
+
+```{r}
+fit<-lm(y~x)
+qqnorm(rstudent(fit))
+qqline(rstudent(fit))
+shapiro.test(resid(fit))
+ad.test(resid(fit))
+lillie.test(resid(fit))
+```
+
+We may also inspect the association between $e_i$, or more appropriately the studentized/standardized residuals, and the predictors and the dependent variable.  If we see evidence of association, then homoskedasticity is a poor assumption
+
+```{r}
+par(mfrow=c(2,2))
+plot(fit)
+
+par(mfrow=c(1,1))
+```
+
+###Model-data agreement
+Do we (meaning our data) meet the statistical assumptions of our analytical models?  
+Always ask this of any analysis you do, if your model is wrong, your inference will also be wrong.
+
+Since spatial data often display correlations amongst closely located observations (autocorrelation), we should probably test for autocorrelation in the model residuals, as that would violate the assumptions of the OLS model.  
+
+One method for doing this is to calculate the value of Moran’s I for the OLS residuals.
+
+```{r,warning=FALSE, message=FALSE}
+library(spdep)
+library(maptools)
+library(RColorBrewer)
+dat<-readShapePoly("SA_classdata.shp", proj4string=CRS("+proj=utm +zone=14 +north"))
+#Make a rook style weight matrix
+sanb<-poly2nb(dat, queen=F)
+summary(sanb)
+salw<-nb2listw(sanb, style="W")
+
+fit2<-lm(I(viol3yr/acs_poptot) ~ pfemhh + hwy + p5yrinmig + log(MEDHHINC), data=dat )
+
+dat$resid<-rstudent(fit2)
+spplot(dat, "resid",at=quantile(dat$resid), col.regions=brewer.pal(n=5, "RdBu"), main="Residuals from OLS Fit of Crime Rate")
+lm.morantest(fit2, listw = salw, resfun = rstudent)
+```
+
+Which, in this case, there appears to be no clustering in the residuals, since the observed value of Moran's I is .021, with a z-test of 0.75, p= .225.
+
+###Extending the OLS model to accommodate spatial structure
+If we now assume we measure our Y and X’s at specific spatial locations (s), so we have Y(s) and X(s).  
+
+In most analysis, the spatial location (i.e. the county or census tract) only serves to link X and Y so we can collect our data on them, and in the subsequent analysis this spatial information is ignored that explicitly considers the spatial relationships between the variables or the locations.
+
+In fact, even though we measure Y(s) and X(s) what we end up analyzing X and Y, and apply the ordinary regression methods on these data to understand the effects of X on Y.  
+
+Moreover, we could move them around in space (as long as we keep the observations together $y_i$ with $x_i$) and still get the same results.
+Such analyses have been called *a-spatial*.  This is the kind of regression model you are used to fitting, where we ignore any information on the locations of the observations themselves.
+
+However, we can extend the simple regression case to include the information on (s) and incorporate it into our models explicitly, so they are no longer *a-spatial*.
+
+There are several methods by which to incorporate the (s) locations into our models, there are several alternatives to use on this problem:
+
+ * The structured linear mixed (multi-level) model, or GLMM (generalized linear mixed model)
+ * Spatial filtering of observations
+ * Spatially autoregressive models
+ * Geographically weighted regression
+
+We will first deal with the case of the spatially autoregressive model, or SAR model, as its structure is just a modification of the OLS model from above.
+
+##Spatially autoregressive models
+We saw in the normal OLS model that some of the basic assumptions of the model are that the:
+1)	model residuals are distributed as iid standard normal random variates
+2)	and that they have common (and constant, meaning homoskedastic) unit variance. 
+
+Spatial data, however present a series of problems to the standard OLS regression model. These problems are typically seen as various representations of spatial structure or *dependence* within the data. The spatial structure of the data can introduce spatial dependence into both the outcome, the predictors and the model residuals.
+
+This can be observed as neighboring observations, both with high (or low) values (positive autocorrelation) for either the dependent variable, the model predictors or the model residuals.  We can also observe situations where areas with high values can be surrounded by areas with low values (negative autocorrelation).
+
+Since the standard OLS model assumes the residuals (and the outcomes themselves) are uncorrelated, as previous stated, the autocorrelation inherent to most spatial data introduces factors that violate the iid distributional assumptions for the residuals, and could violate the assumption of common variance for the OLS residuals.  To account for the expected spatial association in the data, we would like a model that accounts for the spatial structure of the data. One such way of doing this is by allowing there to be correlation between residuals in our model, or to be correlation in the dependent variable.
+
+We are familiar with the concept of autoregression amongst neighboring observations.  This concept is that a particular observation is a linear combination of its neighboring values.  This autoregression introduces dependence into the data.  Instead of specifying the autoregression structure directly, we introduce spatial autocorrelation through a global autocorrelation coefficient and a spatial proximity measure.
+
+There are 2 basic forms of the spatial autoregressive model: the spatial lag and the spatial error models.
+
+Both of these models build on the basic OLS regression model:
+$ Y =  dots  X '  \beta +  e$
+
+Where Y is the dependent variable, X is the matrix of independent variables, $\beta$ is the vector of regression parameters to be estimated from the data, and e are the model residuals, which are assumed to be distributed as a Gaussian random variable with mean 0 and constant variance-covariance matrix $\Sigma$ .
+
+###The spatial lag model
+The spatial lag model introduces autocorrelation into the regression model by lagging the dependent variables themselves, much like in a time-series approach .  
+The model is specified as:
+$Y= \rho  W Y + X '\beta +e$
+
+where $\rho$ is the *autoregressive* coefficient, which tells us how strong the resemblance is, on average, between $Y_i$ and it's neighbors. The matrix  ** W** is the spatial weight matrix, describing the spatial network structure of the observations, like we described in the ESDA lecture.
+
+In the lag model, we are specifying the spatial component on the dependent variable.  This leads to a spatial filtering of the variable, where they are averaged over the surrounding neighborhood defined in **W**, called the spatially lagged variable.
+
+The specification that is used most often is a spatially filtered Y variable that can then be regressed on X, which can directly be seen in a re-expression of the OLS model as:
+
+$Y= \rho WY + X' \beta + e$
+
+where the direct effect of the spatial lagging of the dependent variable is seen.  
+
+To estimate these models we can use either GeoDa or R
+in R we use the spdep package, and the `lagsarlm()` function	
+
+The lag model is:
+```{r}
+fit.lag<-lagsarlm(I(viol3yr/acs_poptot) ~ pfemhh + hwy + p5yrinmig + log(MEDHHINC), data=dat, listw = salw) 
+summary(fit.lag, Nagelkerke=T)
+```
+
+We see that $\rho$ is estimated to be .034, and the likelihood ratio test shows that this is not significantly different from 0.
+
+###The spatial error model
+The spatial error model says that the autocorrelation is not in the outcome itself, but instead, any autocorrelation is attributable to there being missing *spatial covariates* in the data. If these spatially patterned covariates *could* be measures, the tne autocorrelation would be 0. This model is written:
+
+$Y=   X' \beta +e$
+
+$e=\lambda W e + v$
+
+This model, in effect, controls for the nuisance of correlated errors in the data that are attributable to an inherently spatial process, or to spatial autocorrelation in the measurement errors of the measured and possibly unmeasured variables in the model.  
+
+This model is estimated in R using `errorsarlm()` in the `spdep` library
+```{r}
+fit.err<-errorsarlm(I(viol3yr/acs_poptot) ~ pfemhh + hwy + p5yrinmig + log(MEDHHINC), data=dat, listw = salw) 
+summary(fit.err, Nagelkerke=T)
+
+```
+
+We see $\lambda$ = .071, with a p-value of .465, suggesting again that, in this case, there is no autocorrelation in the model residuals.
+
+We can examine the relative fits of each model by extracting the AIC values from each:
+```{r}
+AIC(fit.lag)
+AIC(fit.err)
+AIC(fit2)
+```
+
+Which, while slightly lower than the OLS model, show little evidence of favoring the spatial regression models in this case.
+
+##Examination of Model Specification
+
+To some degree, both of the SAR specifications allow us to model spatial dependence in the data.  The primary difference between them is where we model said dependence. 
+
+The lag model says that the dependence affects the dependent variable only, we can liken this to a diffusion scenario, where your neighbors have a diffusive effect on you. 
+
+The error model says that dependence affects the residuals only.  We can liken this to the missing spatially dependent covariate situation, where, if only we could measure another really important spatially associated predictor, we could account for the spatial dependence.  But alas, we cannot, and we instead model dependence in our errors.
+
+These are inherently two completely different ways to think about specifying a model, and we should really make our decision based upon how we think our process of interest operates.
+
+That being said, this way of thinking isn’t necessarily popular among practitioners.  Most practitioners want the *best fitting model*, ‘nuff said.   So methods have been developed that test for alternate model specifications, to see which kind of model best summarizes the observed variation in the dependent variable and the spatial dependence. 
+
+These are a set of so-called Lagrange Multiplier (econometrician’s jargon for a [score test](https://en.wikipedia.org/wiki/Score_test)) test.  These tests compare the model fits from the OLS, spatial error, and spatial lag models using the method of the score test.
+
+For those who don’t remember, the score test is a test based on the relative change in the first derivative of the likelihood function around the maximum likelihood.  The particular thing here that is affecting the value of this derivative is the autoregressive parameter, $\rho$ or $\lambda$.  In the OLS model $\rho$ or $\lambda$ = 0 (so both the lag and error models simplify to OLS), but as this parameter changes, so does the likelihood for the model, hence why the derivative of the likelihood function is used.  This is all related to how the estimation routines estimate the value of $\rho$ or $\lambda$. 
+
+
+###Using the Lagrange Multiplier Test (LMT)
+In general, you fit the OLS model to your dependent variable, then submit the OLS model fit to the LMT testing procedure.
+
+Then you look to see which model (spatial error, or spatial lag) has the highest value for the test.  
+
+Enter the uncertainty...
+
+So how much bigger, you might say?
+
+Well, drastically bigger, if the LMT for the error model is 2500 and the LMT for the lag model is 2480, this is NOT A BIG DIFFERENCE, only about 1%. 
+If you see a LMT for the error model of 2500 and a LMT for the lag model of 250, THIS IS A BIG DIFFERENCE.
+
+So what if you don’t see a BIG DIFFERENCE, HOW DO YOU DECIDE WHICH MODEL TO USE???
+
+Well, you could think more, but who has time for that.
+
+The econometricians have thought up a “better” LMT test, the so-called robust LMT, robust to what I’m not sure, but it is said that it can settle such problems of a “not so big difference” between the lag and error model specifications.
+
+So what do you do?  In general, think about your problem before you run your analysis, should this fail you, proceed with using the LMT, if this is inconclusive, look at the robust LMT, and choose the model which has the larger value for this test.
+
+
+#More Data Examples:
+###San Antonio, TX mortality data
+
+```{r,warning=FALSE, message=FALSE}
+#Spatial Regression Models 1
+
+#, proj4string=CRS("+proj=utm zone=14")
+dat<-readShapePoly("SA_classdata.shp")
+dat<-dat[which(dat$acs_poptot>100),]
+
+#Create a good representative set of neighbor types
+sa.nb6<-knearneigh(coordinates(dat), k=6)
+sa.nb6<-knn2nb(sa.nb6)
+sa.wt6<-nb2listw(sa.nb6, style="W")
+
+sa.nb5<-knearneigh(coordinates(dat), k=5)
+sa.nb5<-knn2nb(sa.nb5)
+sa.wt5<-nb2listw(sa.nb5, style="W")
+
+sa.nb4<-knearneigh(coordinates(dat), k=4)
+sa.nb4<-knn2nb(sa.nb4)
+sa.wt4<-nb2listw(sa.nb4, style="W")
+
+sa.nb3<-knearneigh(coordinates(dat), k=3)
+sa.nb3<-knn2nb(sa.nb3)
+sa.wt3<-nb2listw(sa.nb3,style="W")
+
+sa.nb2<-knearneigh(coordinates(dat), k=2)
+sa.nb2<-knn2nb(sa.nb2)
+sa.wt2<-nb2listw(sa.nb2,style="W")
+
+sa.nbr<-poly2nb(dat, queen=F)
+sa.wtr<-nb2listw(sa.nbr, zero.policy=T)
+
+sa.nbq<-poly2nb(dat, queen=T)
+sa.wtq<-nb2listw(sa.nbr, style="W", zero.policy=T)
+
+sa.nbd<-dnearneigh(coordinates(dat), d1=0, d2=10000)
+sa.wtd<-nb2listw(sa.nbd, zero.policy=T)
+
+#create a mortality rate, 3 year average
+dat$mort3<-apply(dat@data[, c("deaths09", "deaths10", "deaths11")],1,mean)
+dat$mortrate<-1000*dat$mort3/dat$acs_poptot
+
+#just a 
+hist(dat$mortrate)
+
+#do some basic regression models, without spatial structure
+
+fit.1<-lm(scale(mortrate)~scale(ppersonspo)+scale(I(viol3yr/acs_poptot))+scale(dissim)+scale(ppop65plus), data=dat)
+summary(fit.1)
+vif(fit.1)
+
+par(mfrow=c(2,2))
+plot(fit.1)
+par(mfrow=c(1,1))
+#this is a test for constant variance
+bptest(fit.1)  #looks like have heteroskedasticity
+
+#extract studentized residuals from the fit, and examine them
+dat$residfit1<-rstudent(fit.1)
+
+cols<-brewer.pal(5,"RdBu")
+spplot(dat,"residfit1", at=quantile(dat$residfit1), col.regions=cols, main="Residuals from Model fit of Mortality Rate")
+
+
+```
+
+[Chi and Zhu](http://link.springer.com/article/10.1007/s11113-007-9051-8#page-1) suggest using a wide array of neighbor specifications, then picking the one that maximizes the autocorrelation coefficient. So, here I emulate their results:
+```{r}
+#test for residual autocorrelation 
+resi<-c(lm.morantest(fit.1, listw=sa.wt2)$estimate[1],
+lm.morantest(fit.1, listw=sa.wt3)$estimate[1],
+lm.morantest(fit.1, listw=sa.wt4)$estimate[1],
+lm.morantest(fit.1, listw=sa.wt5)$estimate[1],
+lm.morantest(fit.1, listw=sa.wt6)$estimate[1],
+lm.morantest(fit.1, listw=sa.wtd, zero.policy=T)$estimate[1],
+lm.morantest(fit.1, listw=sa.wtq)$estimate[1],
+lm.morantest(fit.1, listw=sa.wtr)$estimate[1])
+plot(resi, type="l")
+
+lm.morantest(fit.1, listw=sa.wt2)
+lm.morantest(fit.1, listw=sa.wt3)
+lm.morantest(fit.1, listw=sa.wt4)
+lm.morantest(fit.1, listw=sa.wt5)
+lm.morantest(fit.1, listw=sa.wt6)
+lm.morantest(fit.1, listw=sa.wtd, zero.policy=T)
+lm.morantest(fit.1, listw=sa.wtq)
+lm.morantest(fit.1, listw=sa.wtr)
+
+#looks like we have minimal autocorrelation in our residuals, but the distance based
+#weight does show significant autocorrelation
+
+#Let's look at the local autocorrelation in our residuals
+#get the values of I
+dat$lmfit1<-localmoran(dat$mortrate, sa.wt5, zero.policy=T)[,1]
+brks<-classIntervals(dat$lmfit1, n=5, style="quantile")
+spplot(dat, "lmfit1", at=brks$brks
+, col.regions=brewer.pal(5, "RdBu"), main="Local Moran Plot of Mortality Rate")
+
+
+#Now we fit the spatial lag model 
+#The lag mode is fit with lagsarlm() in the spdep library
+#we basically specify the same model as in the lm() fit above
+#But we need to specify the spatial weight matrix and the type
+#of lag model to fit
+
+fit.lag<-lagsarlm(scale(mortrate)~scale(ppersonspo)+scale(I(viol3yr/acs_poptot))+scale(dissim)+scale(ppop65plus), data=dat, listw=sa.wt2, type="lag")
+summary(fit.1)
+summary(fit.lag, Nagelkerke=T)
+bptest.sarlm(fit.lag)
+
+#robust SE's for the spatial model
+library(sandwich)
+lm.target <- lm(fit.lag$tary ~ fit.lag$tarX - 1)
+coeftest(lm.target, vcov.=vcovHC(lm.target, type="HC0"))
+
+
+#Next we fit the spatial error model
+fit.err<-errorsarlm(scale(mortrate)~scale(ppersonspo)+scale(I(viol3yr/acs_poptot))+scale(dissim)+scale(ppop65plus), data=dat, listw=sa.wt2)
+summary(fit.err, Nagelkerke=T)
+
+#As a pretty good indicator of which model is best, look at the AIC of each
+AIC(fit.1)
+AIC(fit.lag)
+AIC(fit.err)
+
+```
+
+
+###Larger data example US counties
+This example shows a lot more in terms of spatial effects.
+
+```{r,warning=FALSE, message=FALSE,fig.width=9, fig.height=8}
+spdat<-readShapePoly("~/Google Drive/a&m_stuff//usdata_mort.shp")
+#Create a good representative set of neighbor types
+us.nb6<-knearneigh(coordinates(spdat), k=6)
+us.nb6<-knn2nb(us.nb6)
+us.wt6<-nb2listw(us.nb6, style="W")
+
+us.nb5<-knearneigh(coordinates(spdat), k=5)
+us.nb5<-knn2nb(us.nb5)
+us.wt5<-nb2listw(us.nb5, style="W")
+
+us.nb4<-knearneigh(coordinates(spdat), k=4)
+us.nb4<-knn2nb(us.nb4)
+us.wt4<-nb2listw(us.nb4, style="W")
+
+us.nb3<-knearneigh(coordinates(spdat), k=3)
+us.nb3<-knn2nb(us.nb3)
+us.wt3<-nb2listw(us.nb3,style="W")
+
+us.nb2<-knearneigh(coordinates(spdat), k=2)
+us.nb2<-knn2nb(us.nb2)
+us.wt2<-nb2listw(us.nb2,style="W")
+
+us.nbr<-poly2nb(spdat, queen=F)
+us.wtr<-nb2listw(us.nbr, zero.policy=T)
+
+us.nbq<-poly2nb(spdat, queen=T)
+us.wtq<-nb2listw(us.nbr, style="W", zero.policy=T)
+
+hist(spdat$mortrate)
+spplot(spdat,"mortrate", at=quantile(spdat$mortrate), col.regions=brewer.pal(n=5, "Reds"), main="Spatial Distribution of US Mortality Rate")
+```
+
+```{r,fig.width=9, fig.height=8}
+#do some basic regression models, without spatial structure
+fit.1.us<-lm(scale(mortrate)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+factor(RUCC), spdat)
+summary(fit.1.us)
+vif(fit.1.us)
+par(mfrow=c(2,2))
+plot(fit.1.us)
+par(mfrow=c(1,1))
+#this is a test for constant variance
+bptest(fit.1.us)  #looks like have heteroskedasticity
+
+#extract studentized residuals from the fit, and examine them
+spdat$residfit1<-rstudent(fit.1.us)
+
+cols<-brewer.pal(5,"RdBu")
+spplot(spdat,"residfit1", at=quantile(spdat$residfit1), col.regions=cols, main="Residuals from Model fit of US Mortality Rate")
+```
+
+```{r}
+#test for residual autocorrelation 
+resi<-c(lm.morantest(fit.1.us, listw=us.wt2)$estimate[1],
+        lm.morantest(fit.1.us, listw=us.wt3)$estimate[1],
+        lm.morantest(fit.1.us, listw=us.wt4)$estimate[1],
+        lm.morantest(fit.1.us, listw=us.wt5)$estimate[1],
+        lm.morantest(fit.1.us, listw=us.wt6)$estimate[1],
+        lm.morantest(fit.1.us, listw=us.wtq,zero.policy=T)$estimate[1],
+        lm.morantest(fit.1.us, listw=us.wtr,zero.policy=T)$estimate[1])
+plot(resi, type="l")
+
+lm.morantest(fit.1.us, listw=us.wt2)
+lm.morantest(fit.1.us, listw=us.wt3)
+lm.morantest(fit.1.us, listw=us.wt4)
+lm.morantest(fit.1.us, listw=us.wt5)
+lm.morantest(fit.1.us, listw=us.wt6)
+lm.morantest(fit.1.us, listw=us.wtq, zero.policy=T)
+lm.morantest(fit.1.us, listw=us.wtr, zero.policy=T)
+
+#Now we fit the spatial lag model 
+#The lag mode is fit with lagsarlm() in the spdep library
+#we basically specify the same model as in the lm() fit above
+#But we need to specify the spatial weight matrix and the type
+#of lag model to fit
+
+fit.lag.us<-lagsarlm(scale(mortrate)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+factor(RUCC), spdat, listw=us.wt2, type="lag")
+summary(fit.lag.us, Nagelkerke=T)
+bptest.sarlm(fit.lag.us)
+
+#Robust SE's
+lm.target.us <- lm(fit.lag.us$tary ~ fit.lag.us$tarX - 1)
+coeftest(lm.target.us, vcov.=vcovHC(lm.target.us, type="HC0"))
+
+
+#Next we fit the spatial error model
+fit.err.us<-errorsarlm(scale(mortrate)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+factor(RUCC), spdat, listw=us.wt2)
+summary(fit.err.us, Nagelkerke=T)
+
+#As a pretty good indicator of which model is best, look at the AIC of each
+AIC(fit.1)
+AIC(fit.lag.us)
+AIC(fit.err.us)
+
+```
+
+
+#Spatial Regression Models
+This lecture builds off the previous lecture on the Spatially Autoregressive Model (SAR) with either a lag or error specification. 
+The lag model is written:
+$Y= \rho  W Y + X '\beta +e$
+
+Where Y is the dependent variable, X is the matrix of independent variables, $\beta$ is the vector of regression parameters to be estimated from the data, $\rho$ is the *autoregressive* coefficient, which tells us how strong the resemblance is, on average, between $Y_i$ and it's neighbors. The matrix  **W** is the spatial weight matrix, describing the spatial network structure of the observations, like we described in the ESDA lecture.
+
+In the lag model, we are specifying the spatial component on the dependent variable.  This leads to a spatial filtering of the variable, where they are averaged over the surrounding neighborhood defined in **W**, called the spatially lagged variable. In R we use the spdep package, and the `lagsarlm()` function	to fit this model.
+
+The error model says that the autocorrelation is not in the outcome itself, but instead, any autocorrelation is attributable to there being missing *spatial covariates* in the data. If these spatially patterned covariates *could* be measures, the tne autocorrelation would be 0. This model is written:
+
+$Y=   X' \beta +e$
+
+$e=\lambda W e + v$
+
+This model, in effect, controls for the nuisance of correlated errors in the data that are attributable to an inherently spatial process, or to spatial autocorrelation in the measurement errors of the measured and possibly unmeasured variables in the model.  This model is estimated in R using `errorsarlm()` in the `spdep` library.
+
+##Examination of Model Specification
+To some degree, both of the SAR specifications allow us to model spatial dependence in the data.  The primary difference between them is where we model said dependence. 
+
+The lag model says that the dependence affects the dependent variable only, we can liken this to a diffusion scenario, where your neighbors have a diffusive effect on you. 
+
+The error model says that dependence affects the residuals only.  We can liken this to the missing spatially dependent covariate situation, where, if only we could measure another really important spatially associated predictor, we could account for the spatial dependence.  But alas, we cannot, and we instead model dependence in our errors.
+
+These are inherently two completely different ways to think about specifying a model, and we should really make our decision based upon how we think our process of interest operates.
+
+That being said, this way of thinking isn’t necessarily popular among practitioners.  Most practitioners want the *best fitting model*, ‘nuff said.   So methods have been developed that test for alternate model specifications, to see which kind of model best summarizes the observed variation in the dependent variable and the spatial dependence. 
+
+##More exotic types of spatial dependence
+**Spatial Durbin Model**
+Another form of a spatial lag model is the Spatial Durbin Model (SDM). This model is an extension of the ordinary lag or error model that includes spatially lagged independent variables. If you remember, one issue that commonly occures with the lag model, is that we often have residual autocorrelation in the model. This autocorrelation could be attributable to a missing spatial covariate. We *can* get a kind of spatial covariate by lagging the predictor variables in the model using **W**. This model can be written:
+
+$Y= \rho  W Y + X '\beta + W X \theta + e$
+
+Where, the $\theta$ parameter vector are now the regression coefficients for the lagged predictor variables. We can also include the lagged predictors in an error model, which gives us the Durbin Error Model (DEM):
+
+$Y= X '\beta + W X \theta + e$
+
+$e=\lambda W e + v$
+
+Generally, the spatial Durbin model is preferred to the ordinary error model, because we can include the *“unspecified” spatial covariates* from the error model into the Durbin model via the lagged predictor variables.
+
+**Spatially Autoregressive Moving Average Model**
+Futher extensions of these models include dependence on both the outcome and the error process. Two models are described in [LeSage and Pace](https://books.google.com/books?id=EKiKXcgL-D4C&hl=en). The Spatial Autocorrelation Model, or SAC model and the Spatially autoregressive moving average model (SARMA model). 
+The SAC model is:
+
+$Y= \rho  W_1 Y + X '\beta + e$
+
+$e=\theta W_2 e + v$
+
+$Y= (I_n - \rho W_1)^{-1} X '\beta + (I_n - \rho W_1)^{-1} (I_n - \theta W_2)^{-1} e$
+
+Where, you can potentially have two different spatial weight matrices, $W_1$ and $W_2$. Here, the lagged error term is taken over all orders of neighbors, leading to a more *global* error process, while the SARMA model has form:
+
+$Y= \rho  W_1 Y + X '\beta + u$
+
+$u=(I_n - \theta W_2) e$
+
+$e \sim N(0, \sigma^2 I_n)$ 
+
+$Y= (I_n - \rho W_1)^{-1} X '\beta + (I_n - \rho W_1)^{-1} (I_n - \theta W_2) e$
+
+which gives a "locally" weighted moving average to the residuals, which will avereage the residuals only in the local neighborhood, instead of over all neighbor orders.
+
+Fitting these models in R can be done in the `spdep` library.
+```{r, fig.width=9, fig.height=8}
+#Create a k=4 nearest neighbor set
+us.nb4<-knearneigh(coordinates(spdat), k=4)
+us.nb4<-knn2nb(us.nb4)
+us.wt4<-nb2listw(us.nb4, style="W")
+
+
+
+samp<-sample(1:dim(spdat@data)[1],size = 500, replace = F)
+spdat$newmort<-spdat$mortrate
+spdat$newmort[samp]<-NA
+
+nbs<-poly2nb(spdat, queen = T)
+nbs
+us.lw<-nb2listw(nbs, zero.policy = T)
+
+moran.test(spdat$mortrate,listw = us.lw , zero.policy = T)
+
+moran.test(spdat$mortrate,listw = us.lw , zero.policy = T)
+
+
+hist(spdat$mortrate)
+spplot(spdat,"mortrate", at=quantile(spdat$mortrate),col=NA, col.regions=brewer.pal(n=5, "Reds"), main="Spatial Distribution of US Mortality Rate")
+
+fit.1.us<-lm(scale(mortrate)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), spdat)
+summary(fit.1.us)
+
+lm.morantest(fit.1.us, listw=us.wt4)
+
+#SAR - Lag model
+fit.lag<-lagsarlm(scale(mortrate)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), spdat, listw=us.wt4, type="lag", method="MC")
+summary(fit.lag, Nagelkerke=T)
+
+#SAR - Error model
+fit.err<-errorsarlm(scale(mortrate)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), spdat, listw=us.wt4, etype="error", method="MC")
+summary(fit.err, Nagelkerke=T)
+
+#Spatial Durbin Model
+fit.durb<-lagsarlm(scale(mortrate)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), spdat, listw=us.wt4, type="mixed", method="MC")
+summary(fit.durb, Nagelkerke=T)
+
+#Spatial Durbin Error Model
+fit.errdurb<-errorsarlm(scale(mortrate)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), spdat, listw=us.wt4, etype="emixed", method="MC")
+summary(fit.errdurb, Nagelkerke=T)
+
+
+#SAC Model
+fit.sac<-sacsarlm(scale(mortrate)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), spdat, listw=us.wt4, type="sac", method="MC")
+summary(fit.sac, Nagelkerke=T)
+
+#SMA Model
+fit.sma<-spautolm(scale(mortrate)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), spdat, listw=us.wt4, family="SMA")
+summary(fit.sma)
+```
+
+
+
+##Using the Lagrange Multiplier Test (LMT)
+The so-called Lagrange Multiplier (econometrician’s jargon for a [score test](https://en.wikipedia.org/wiki/Score_test)) test.  These tests compare the model fits from the OLS, spatial error, and spatial lag models using the method of the score test.
+
+For those who don’t remember, the score test is a test based on the relative change in the first derivative of the likelihood function around the maximum likelihood.  The particular thing here that is affecting the value of this derivative is the autoregressive parameter, $\rho$ or $\lambda$.  In the OLS model $\rho$ or $\lambda$ = 0 (so both the lag and error models simplify to OLS), but as this parameter changes, so does the likelihood for the model, hence why the derivative of the likelihood function is used.  This is all related to how the estimation routines estimate the value of $\rho$ or $\lambda$. 
+
+In general, you fit the OLS model to your dependent variable, then submit the OLS model fit to the LMT testing procedure.
+
+Then you look to see which model (spatial error, or spatial lag) has the highest value for the test.  
+
+Enter the uncertainty... So how much bigger, you might say?
+
+Well, drastically bigger, if the LMT for the error model is 2500 and the LMT for the lag model is 2480, this is NOT A BIG DIFFERENCE, only about 1%. 
+If you see a LMT for the error model of 2500 and a LMT for the lag model of 250, THIS IS A BIG DIFFERENCE.
+
+So what if you don’t see a BIG DIFFERENCE, HOW DO YOU DECIDE WHICH MODEL TO USE???
+
+Well, you could think more, but who has time for that.
+
+The econometricians have thought up a “better” LMT test, the so-called robust LMT, robust to what I’m not sure, but it is said that it can settle such problems of a “not so big difference” between the lag and error model specifications.
+
+So what do you do?  In general, think about your problem before you run your analysis, should this fail you, proceed with using the LMT, if this is inconclusive, look at the robust LMT, and choose the model which has the larger value for this test.
+
+Here's how we do the Lagrange Multiplier test in R:
+```{r}
+lm.LMtests(fit.1.us, listw=us.wt4, test="all")
+```
+
+There is a `r round(100*((1084.9 - 1056.8)/1056.8), 2)`% difference the regular LM test between the error and lag models, but a `r round(100*((105.56 - 77.419)/77.419), 2)`% difference in the Robust LM tests.  In this case, I would say that either the lag model looks like the best one, using the Robust Lagrange multiplier test, or possibly the SARMA model, since it's test is `r round(100*((1162.4-1084.9 )/1084.9), 2)`% difference between it and the lag model. Unfortunately, there is no a robust test for SARMA model.
+
+Of course, the AIC is also your friend:
+```{r,fig.width=7, fig.height=6}
+AICs<-c(AIC(fit.1.us),AIC(fit.lag), AIC(fit.err), AIC(fit.durb), AIC(fit.errdurb), AIC(fit.sac), AIC(fit.sma))
+plot(AICs, type="l", lwd=1.5, xaxt="n", xlab="")
+axis(1, at=1:7,labels=F) #6= number of models
+labels<-c("OLS", "Lag","Err", "Durbin","Err Durbin", "SAC", "SMA" )
+text(1:7, par("usr")[3]-.25, srt=45, adj=1, labels=labels, xpd=T)
+mtext(side=1, text="Model Specification", line=3)
+symbols(x= which.min(AICs), y=AICs[which.min(AICs)], circles=1, fg=2,lwd=2,add=T)
+```
+
+```{r}
+knitr::kable(data.frame(Models=labels, AIC=round(AICs, 2)))
+```
+
+Which shows that the Spatial Durbin model best fits the data, although the degree of difference between it an the SAC model is small. A likelihood ratio test could be used:
+```{r}
+anova(fit.sac, fit.durb)
+```
+Which indicates that the Durbin model fits significantly better than the SAC model. **Durbin it is!!**
+
+
+##Interpreting effects in spatial lag models
+In **spatial lag models**, interpretation of the regression effects is complicated. Each observation will have a direct effect of its predictors, but each observation will also have in indirect effect of the information of its neighbors, although Spatial Error models do not have this issue.
+In OLS, the impact/effect of a predictor is straight forward:
+$\frac {\delta y_i} {\delta x_{ik}} = \beta_k$ and $\frac {\delta y_i} {\delta x_{jk}} = 0$,
+but when a model has a spatial lag of either the outcome or a predictor, this becomes more complicated, indeed:
+$\frac {\delta y_i} {\delta x_{jk}}$ may not = 0,
+or $\frac {\delta y_i} {\delta x_{jk}} = S_r(W)$ , where $S_r(W) = (I_n - \rho W)^{-1} \beta_k$
+This implies that a change in the ith region’s predictor can affect the jth region’s outcome
+ *  We have 2 situations:
+ *  $S_r(W)_{ii}$, or the direct impact of an observation's predictor on its own outcome, and:
+ *  $S_r(W)_{ij}$, or the _indirect impact_ of an observation's neighbor's predictor on its outcome.
+
+This leads to three quantities that we want to know:
+ *  _Average Direct Impact_, which is similar to a traditional interpretation
+ *  _Average Total impact_, which would be the total of direct and indirect impacts of a predictor on one’s outcome
+ *  _Average Indirect impact_, which would be the average impact of one’s neighbors on one’s outcome
+
+These quantities can be found using the `impacts()` function in the `spdep` library. 
+We follow the example that converts the spatial weight matrix into a "sparse" matrix, and power it up using the `trW()` function. This follows the approximation methods described in Lesage and Pace, 2009. Here, we use Monte Carlo simulation to obtain simulated distributions of the various impacts. We are looking for the first part of the output and 
+```{r}
+W <- as(us.wt4, "CsparseMatrix")
+trMC <- trW(W, type="MC")
+im<-impacts(fit.durb, tr=trMC, R=100)
+sums<-summary(im,  zstats=T)
+data.frame(sums$res)
+data.frame(sums$pzmat)
+```
+
+We see all variables have a significant *direct* effect, we also see that poverty, %65 and older, hispanic % and Rural classifications all have **significant indirect impacts**.
+
+We can likewise see the effects by order of neighbors, similar to what Yang et al[(2015)](http://onlinelibrary.wiley.com/doi/10.1002/psp.1809/abstract) do in their Table 4.
+
+Here, I do this up to 5th order neighbors.
+```{r}
+im2<-impacts(fit.durb, tr=trMC, R=100, Q=5)
+sums2<-summary(im2,  zstats=T, reportQ=T, short=T)
+sums2
+```
+
+So we see that, for instance, for the direct impact of poverty, .4446/.4667 = `r round(100*(.4446/.4667),2)`% of the effect is due to a county's own influence on itself, while (-.013 + .0277 + .0019 + .0037)/.4667 = `r round(100*((-.013 + .0277 + .0019 + .0037)/.4667),2)` % of the effect of poverty comes from other neighboring counties.
+
+
+#Geographically Weighted Regression
+Generally, if we have a continuous outcome, we consider using the OLS model and when we have data collected over space, we have other assumptions too. 
+```{r library load, warning=FALSE, message=FALSE}
+library(spdep)
+library(maptools)
+library(car)
+library(lmtest)
+library(spgwr)
+library(classInt)
+library(RColorBrewer)
+
+```
+
+*Stationarity* is a general term in statistics/math, generally it means something doesn't change over time or space
+e.g. stationary population
+e.g. stationary time series
+In spatial statistics, we can stay stationarity = homogeneity of an effect, or, that a process works the same regardless of where you observe the process.
+In spatial statistics, the latter can be a weak assumption, and we can ask, does X affect Y differently at different geographic locations, or in terms of parameters:
+If we estimate in OLS $\beta$ = .5, are there locations in the data where $\beta$ != .5?
+
+###Approaches to non-stationarity
+There are several approaches to dealing with this problem. Among them are:
+* Create zones of homogeneity and stratify
+* Allow parameters to vary constantly
+
+The first technique is stratification, or *spatial regimes*. This is where we stratify the data by either a known fixed quality, such as the state in which a county is located, or perhaps some other socio-demographic or socio-economic variable.
+![Technique 1 - Stratification](/Users/ozd504/Google Drive/dem7263/gwr1.png)
+
+We then fit separate regression models for each region. These could be OLS or some other specification we have discussed.
+
+First, we read in our data and make a spatial representation of it
+```{r data prep}
+spdat$population<-as.numeric(as.character(spdat$Population))
+spdat$deaths<-as.numeric(as.character(spdat$Deaths))
+spdat<-spdat[spdat$STATE%in%c("05","22","40","35", "48"),]
+spdat$mig_group<-cut(spdat$p5yrinmig, breaks = quantile(spdat$p5yrinmig, p=c(0, .3, .6, 1)), include.lowest = T)
+lvs<-levels(spdat$mig_group)
+lvs
+nbs<-knearneigh(coordinates(spdat), k=2)
+
+nbsmg1<-knearneigh(coordinates(spdat[spdat$mig_group==lvs[1],]), k=2)
+nbsmg2<-knearneigh(coordinates(spdat[spdat$mig_group==lvs[2],]), k=2)
+nbsmg3<-knearneigh(coordinates(spdat[spdat$mig_group==lvs[3],]), k=2)
+
+nbs<-knn2nb(nbs,sym=T)
+nbs1<-knn2nb(nbsmg1, sym=T)
+nbs2<-knn2nb(nbsmg2, sym=T)
+nbs3<-knn2nb(nbsmg3, sym=T)
+```
+
+Here's the basic OLS model:
+```{r}
+fit.1<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), data=spdat)
+summary(fit.1)
+```
+
+We could stratify by state:
+```{r ols regression}
+#Examine basic regimes, using states as a nesting mechanism
+spplot(spdat, "STATE")
+fit.strat<-lm(I(deaths/population)~STATE/(scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7)), data=spdat)
+summary(fit.strat)
+anova(fit.1, fit.strat)
+```
+
+Or, we could examine an alternative regime, based on a demographic characteristic, say migration:
+```{r plot neighbors, fig.height=6, fig.width=8}
+spplot(spdat, "mig_group", col.regions=brewer.pal(n=3, "Greys"))
+
+fit.strat2<-lm(I(deaths/population)~mig_group/(scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7)), data=spdat)
+summary(fit.strat2)
+anova(fit.1, fit.strat2)
+anova(fit.strat2, fit.strat)
+
+plot(spdat, main="Neighbors for low migration counties")
+plot(nbs1,coords=coordinates(spdat[spdat$mig_group==lvs[1],]), col=2, add=T)
+plot(spdat, main="Neighbors for medium migration counties")
+plot(nbs2,coords=coordinates(spdat[spdat$mig_group==lvs[2],]), col=2, add=T)
+plot(spdat, main="Neighbors for high migration counties")
+plot(nbs3,coords=coordinates(spdat[spdat$mig_group==lvs[3],]), col=2, add=T)
+
+wts<-nb2listw(nbs)
+wts1<-nb2listw(nbs1)
+wts2<-nb2listw(nbs2)
+wts3<-nb2listw(nbs3)
+```
+
+So we see non-stationarity in several of the covariates, with respect to state. The effects of poverty, age structure and race/ethnicty all vary significantly by state. Similar results are also seen for the migration rate grouping variable, althought the final model comparison of the two stratified models shows more variation between states than between migration groups.
+
+If we wanted, we could stratify our analysis by state. Below, I simply stratify the analysis by state and use the OLS model.
+
+```{r}
+fit.ar<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), data=spdat, subset=STATE=="05")
+summary(fit.ar)
+
+fit.la<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), data=spdat, subset=STATE=="22")
+summary(fit.la)
+
+fit.ok<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), data=spdat, subset=STATE=="40")
+summary(fit.ok)
+
+fit.nm<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), data=spdat, subset=STATE=="35")
+summary(fit.nm)
+
+fit.tx<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), data=spdat, subset=STATE=="48")
+summary(fit.tx)
+```
+
+Or, we could run a SAR model for each subset using the weights we created above:
+```{r}
+#first the "global" model
+efit<-lagsarlm(scale(I(deaths/population))~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), data=spdat, listw=wts)
+```
+
+Then, a regime specification as used by [Brazil 2015](http://onlinelibrary.wiley.com/doi/10.1002/psp.1968/full)
+
+```{r}
+efit0<-lagsarlm(scale(I(deaths/population))~mig_group/(scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7)), data=spdat, listw=wts)
+summary(efit0)
+anova(efit, efit0)
+```
+
+Or, I could fit the fully stratified models, one regime at a time by subsetting and using the group-specific spatial weights:
+```{r}
+efit1<-lagsarlm(scale(I(deaths/population))~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), data=spdat[spdat$mig_group==lvs[1],], listw=wts1)
+
+efit2<-lagsarlm(scale(I(deaths/population))~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), data=spdat[spdat$mig_group==lvs[2],], listw=wts2)
+
+efit3<-lagsarlm(scale(I(deaths/population))~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), data=spdat[spdat$mig_group==lvs[3],], listw=wts3)
+
+summary(efit1)
+summary(efit2)
+summary(efit3)
+```
+
+
+##GWR Model
+First proposed by [Brunsdon et al 1996](http://www.tandfonline.com/doi/abs/10.1080/02693799608902100?journalCode=tgis19#.Vi5PRRCrTdc)
+
+Their model was specified, where now each $\beta_k$ is estimated at the location $u_i,v_j$ where i and j are the coordinates or geographic location of the observation i.
+  $\beta_k(ui,vj)$ is the local realization of $\beta$ at location i,j.  This constructs a trend surface of parameter values for each independent variable and the model intercept.  
+  Note that the basic OLS regression model above is just a special case of the GWR model where the coefficients are constant over space. 
+The parameters in the GWR are estimated by weighted least squares.  The weighting matrix is a diagonal matrix, with each diagonal element being a function of the location of the observation.  if Wi is the weighting matrix at location i, then the parameter estimate at that location would be
+
+$\hat \beta_i = (X'WX)^{-1} X'WY$
+
+The role of the weight matrix is to give more value to observations that are close to i.  as it is assumed that observations that are close will influence each other more than those that are far away.
+This is NOT the same W matrix as was used in Moran's I!
+
+W is generally constructed based on the distances between locations, and if $d_ij$ < d , then $w_{ij}$=1, and 0 otherwise. Brunsdson, Charlton, and Fotheringham used  a kernel-density approach to measure W
+
+$w_{ij} = exp(- \frac{1}{2}(d_{ij}/b)^2)$
+
+where b is the *bandwidth* parameter to be estimated.  under this weighting scheme, the weight for points that exactly co-occur will be 1 and for those that are the distance $d_{ij}$ apart, the weight will decrease as a Gaussian curve as $d_{ij}$ increases.
+
+![GWR Kernels](/Users/ozd504/Google Drive/dem7263/gwr2.png)
+
+There are several ways to do this, but most programs use a cross-validation method to choose the optimal kernel bandwidth. The cross validation method takes the form:
+$CV = \Sigma_i \left[y_i - \hat y_{\neq i} (\beta) \right ]^2$
+
+Where $\hat y_{\neq i} (\beta)$ is the fitted value of $y_i$ with the observations for point i omitted from the calibration process.  This in effect minimizes the sum of squared errors at all locations i, and arrives at an optimal bandwidth.
+
+When the model is fit, we can also calculate local z/t tests to test whether the *effect* of a specifix X variable is significant at a particular location. Likewise, we can calculate a local $R^2$ measure at each location. 
+
+[Leung et al 2000](http://epn.sagepub.com/content/32/1/9.abstract?id=a3162) proposed a series of F tests for model improvement over OLS, and they also derive an F test for variation in the beta coefficients (so called F3 test. 
+
+###GWR Modeling
+The advantage of GWR is that we can visualize the difference in the covariate effects as a continuous surface. There are a few steps to fitting the GWR model. First we need to select a bandwidth for the weighting algorithm
+
+```{r}
+gwr.b.f<-gwr.sel(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), spdat)
+
+gwr.b.f
+#this is the distance (in meters, because our data are projected in a system measured in meters), which the weighting fuction will search, and include all observations within this radius.
+
+gwr.f<-gwr(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), spdat, bandwidth=gwr.b.f, se.fit=T, hatmatrix=T)
+gwr.f
+
+BFC02.gwr.test(gwr.f)
+BFC99.gwr.test(gwr.f)
+LMZ.F1GWR.test(gwr.f)
+LMZ.F2GWR.test(gwr.f)
+LMZ.F3GWR.test(gwr.f)
+```
+
+
+```{r}
+gwr.dat<-gwr.f$SDF
+cols<-brewer.pal(n=6, name="RdBu")
+names(gwr.dat)
+
+#pdf("gwrfixed.pdf")
+spplot(gwr.dat, "scale.ppersonspo.", at=quantile(gwr.f$SDF$scale.ppersonspo.), col.regions=cols, main="% Poverty effect")
+spplot(gwr.dat, "scale.pblack_1.", at=quantile(gwr.f$SDF$scale.pblack_1.), col.regions=cols, main="% Black effect")
+spplot(gwr.dat, "scale.phisp.", at=quantile(gwr.f$SDF$scale.phisp.), col.regions=cols, main="% Hispanic effect")
+
+#another "lighter" plot method
+#brks<-c(-3.038e-04,  3.441e-04,  5.882e-04,  7.912e-04 , 1.355e-03); cols<-brewer.pal(n=5,"Reds")
+#plot(gwr.a$SDF, col=cols[findInterval(gwr.a$SDF$scale.ppersonspo.,brks, all.inside=TRUE)])
+
+#Local R^2
+brks<-seq(0, 1, length.out = 9); cols=brewer.pal(n=9, "Reds")
+spplot(gwr.f$SDF, "localR2", at=brks, col.regions=cols, main="local R^2")
+
+
+#plots of the correlations of the coefficients
+pairs(gwr.f$SDF[,3:7])
+cor(as(gwr.f$SDF[,3:7], "data.frame"))
+
+```
+This plot shows a problem in GWR, that the coefficients can often be highly correlated [See Wheeler and Tiefelsdorf (2005)](http://link.springer.com/article/10.1007%2Fs10109-005-0155-6#page-1), one of the major critiques of GWR. In general, the critiques of GWR have pushed most users to use it for "exploratory" purposes only. So, one way we may explore our model is to examine where the regression effects are "significant" versus not. This can be done by plotting the local t-statistics, or z-statistics if you prefer.
+
+```{r}
+
+cols<-brewer.pal(8,"RdBu")
+dfree<-gwr.f$results$edf
+
+names(gwr.dat)
+
+gwr.dat$pov.t<-gwr.dat$scale.ppersonspo./gwr.dat$scale.ppersonspo._se
+gwr.dat$pov.t.p<-2*pt(-abs(gwr.dat$pov.t)  , dfree)
+tbrks<- c(min(gwr.dat$pov.t),qt(c( .975, .9, .1, .025),df=dfree, lower.tail = F),max(gwr.dat$pov.t))
+spplot(gwr.dat, "pov.t", col.regions=cols, at=tbrks , main="t-stat %Poverty")
+
+gwr.dat$black.t<-gwr.dat$scale.pblack_1./gwr.dat$scale.pblack_1._se
+gwr.dat$black.t.p<-2*pt(-abs(gwr.dat$black.t)  , dfree)
+tbrks<- c(min(gwr.dat$black.t),qt(c( .975, .9, .1, .025),df=dfree, lower.tail = F),max(gwr.dat$black.t))
+spplot(gwr.dat, "black.t", col.regions=cols,at=tbrks , main="t-stat %Black")
+
+gwr.dat$hisp.t<-gwr.dat$scale.phisp./gwr.dat$scale.phisp._se
+gwr.dat$hisp.t.p<-2*pt(-abs(gwr.dat$hisp.t)  , dfree)
+tbrks<- c(min(gwr.dat$hisp.t),qt(c( .975, .9, .1, .025),df=dfree, lower.tail = F),max(gwr.dat$hisp.t))
+spplot(gwr.dat, "hisp.t", col.regions=cols, at=tbrks, main="t-stat %Hispanic")
+
+```
+
+So, those are the results from the fixed bandwith analysis. But there are obviously places in our data where counties are more densely occurring, so an adaptive kernel approach is also warranted. If all our data were equally spaced, then this may not be necessary. 
+
+Now we try everthing with the *adaptive bandwidth*:
+```{r}
+gwr.b.a<-gwr.sel(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), spdat, adapt=T)
+gwr.b.a
+```
+
+This is the proportion of all cases which the weighting fuction will search, and include this fraction of observations in a model for each county. In this case it will include `r gwr.b.a * dim(spdat@data)[1]` counties in the model for a particular county.
+
+```{r}
+gwr.a<-gwr(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7), spdat, adapt=gwr.b.a, se.fit=T, hatmatrix=T )
+gwr.a
+
+BFC02.gwr.test(gwr.a)
+BFC99.gwr.test(gwr.a)
+LMZ.F1GWR.test(gwr.a)
+LMZ.F2GWR.test(gwr.a)
+LMZ.F3GWR.test(gwr.a)
+
+gwr.data<-gwr.a$SDF
+spplot(gwr.data, "scale.ppersonspo.", at=quantile(gwr.a$SDF$scale.ppersonspo.), col.regions=cols, main="% Poverty effect")
+spplot(gwr.data, "scale.pblack_1.", at=quantile(gwr.a$SDF$scale.pblack_1.), col.regions=cols, main="% Black effect")
+spplot(gwr.data, "scale.phisp.", at=quantile(gwr.a$SDF$scale.phisp.), col.regions=cols, main="% Hispanic effect")
+
+cols<-brewer.pal(8,"RdBu")
+dfree<-gwr.a$results$edf
+
+names(gwr.data)
+
+gwr.data$pov.t<-gwr.data$scale.ppersonspo./gwr.data$scale.ppersonspo._se
+gwr.data$pov.t.p<-2*pt(-abs(gwr.data$pov.t)  , dfree)
+tbrks<- c(min(gwr.data$pov.t),qt(c( .975, .9, .1, .025),df=dfree, lower.tail = F),max(gwr.data$pov.t))
+spplot(gwr.data, "pov.t", col.regions=cols, at=tbrks , main="t-stat %Poverty")
+
+gwr.data$black.t<-gwr.data$scale.pblack_1./gwr.data$scale.pblack_1._se
+gwr.data$black.t.p<-2*pt(-abs(gwr.data$black.t)  , dfree)
+tbrks<- c(min(gwr.data$black.t),qt(c( .975, .9, .1, .025),df=dfree, lower.tail = F),max(gwr.data$black.t))
+spplot(gwr.data, "black.t", col.regions=cols,at=tbrks , main="t-stat %Black")
+
+gwr.data$hisp.t<-gwr.data$scale.phisp./gwr.data$scale.phisp._se
+gwr.data$hisp.t.p<-2*pt(-abs(gwr.data$hisp.t)  , dfree)
+tbrks<- c(min(gwr.data$hisp.t),qt(c( .975, .9, .1, .025),df=dfree, lower.tail = F),max(gwr.data$hisp.t))
+spplot(gwr.data, "hisp.t", col.regions=cols, at=tbrks, main="t-stat %Hispanic")
+
+#Local R^2
+brks<-seq(0, 1, length.out = 9); cols=brewer.pal(n=9, "Reds")
+spplot(gwr.a$SDF, "localR2", at=brks, col.regions=cols, main="local R^2")
+
+```
+
+
+#Alternative Construction of spatial regimes - Clustering on GWR coefficients
+The first step in the construction of spatial regimes is to do a hierarchical clustering method. We use a distance matrix between all observations for this In this case, we're using the **GWR coefficients** as our data. 
+
+```{r}
+dat.dist<-dist(gwr.data@data[, 3:7])
+
+#The hclust() function does basic hierarchical clustering
+#according to several different methods, we'll use Ward's method
+clust.dat<-hclust(dat.dist, method="ward.D")
+
+#And we'll plot the dendrogram, or tree plot
+plot(clust.dat)
+
+#I only want a few groups, so I'll cut the tree so I get 5 clusters
+gwr.data$clus<-cutree(clust.dat, k=5)
+
+
+#i'll use table() to get the frequencies of each cluster
+table(gwr.data$clus)
+
+#to get it to plot right, we have to convert the cluster number
+#to a factor variable
+gwr.data$b.cf<-as.factor(gwr.data$clus)
+spplot(gwr.data,"b.cf", col.regions=brewer.pal(4, "Accent"), main="GWR Spatial Regimes")
+
+#We can get the means of each coefficient for each of the regime areas
+b.means<-aggregate(gwr.data@data[, 3:5], by=list(gwr.data$clus), mean)
+b.means
+#The main idea behind examining spatial regimes is that we are looking for areas where the model may be working differently, we've done this, now we will
+#fit separate ols models to each regime
+spdat$cluster<-gwr.data$clus
+lm1<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7),spdat, subset=spdat$cluster==1)
+lm2<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7),spdat, subset=spdat$cluster==2)
+lm3<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7),spdat, subset=spdat$cluster==3)
+lm4<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7),spdat, subset=spdat$cluster==4)
+
+#examine each of the spatial regimes
+summary(lm1)
+summary(lm2)
+summary(lm3)
+summary(lm4)
+
+```
+
+Or, we could cluster on the original attributes in the data to find similar places based on their demographic variables:
+```{r}
+dem.dist<-dist(spdat@data[, c("ppersonspo", "p65plus", "pblack_1", "phisp")])
+
+#The hclust() function does basic hierarchical clustering
+#according to several different methods, we'll use Ward's method
+clust.dem<-hclust(dem.dist, method="ward.D")
+
+#And we'll plot the dendrogram, or tree plot
+plot(clust.dem)
+
+#I only want a few groups, so I'll cut the tree so I get 4 clusters
+spdat$clus<-cutree(clust.dem, k=4)
+
+
+#i'll use table() to get the frequencies of each cluster
+table(spdat$clus)
+
+#to get it to plot right, we have to convert the cluster number
+#to a factor variable
+spdat$d.cf<-as.factor(spdat$clus)
+spplot(spdat,"d.cf", col.regions=brewer.pal(4, "Accent"), main="Demographic Spatial Regimes")
+
+#We can get the means of each coefficient for each of the regime areas
+b.means<-aggregate(spdat@data[, c("ppersonspo", "p65plus", "pblack_1", "phisp")], by=list(spdat$d.cf), mean)
+b.means
+
+#fit separate ols models to each regime
+
+lm1<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7),spdat, subset=spdat$d.cf==1)
+lm2<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7),spdat, subset=spdat$d.cf==2)
+lm3<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7),spdat, subset=spdat$d.cf==3)
+lm4<-lm(I(deaths/population)~scale(ppersonspo)+scale(p65plus)+scale(pblack_1)+scale(phisp)+I(RUCC>=7),spdat, subset=spdat$d.cf==4)
+
+#examine each of the spatial regimes
+summary(lm1)
+summary(lm2)
+summary(lm3)
+summary(lm4)
+
+```
+
+
+
