@@ -1,4 +1,4 @@
-myseg<-function(dat, id,  group1, group2){ #group and total as character
+myseg<-function(data, id,  group1, group2){ #group and total as character
   #higher level total
   htotg1<-tapply(dat[, group1], dat[, id], sum, na.rm=T)
   htotg2<-tapply(dat[, group2], dat[, id], sum, na.rm=T)
