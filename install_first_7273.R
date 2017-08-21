@@ -1,4 +1,4 @@
-message("This may take a while")
+print("This may take a while")
 install.packages(c("devtools", "tidyverse","bootstrap", "lmtest", "car", "Hmisc", "sandwich", "multcomp", "knitr", "lattice", "lme4", "survey", "pscl", "readstata13", "ctv","ggplot2", "acs", "ggmap", "dplyr", "sjPlot", "survey", "devtools"), dependencies = T)
 library(ctv)
 install.views(c("SocialSciences", "ReproducibleResearch"), coreOnly = T )
