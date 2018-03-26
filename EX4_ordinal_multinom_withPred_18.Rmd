@@ -1,0 +1,388 @@
+---
+title: "DEM 7283 - Example 3 - Ordinal & Multinomial Logit Models"
+author: "Corey S. Sparks, PhD"
+date: "February 5, 2018"
+output:
+  html_document:
+    fig_height: 7
+  pdf_document: 
+    latex_engine: xelatex
+  word_document: default
+---
+
+This example will cover the use of R functions for fitting Ordinal and Multinomial logit models to complex survey data.
+
+For this example I am using 2016 CDC Behavioral Risk Factor Surveillance System (BRFSS) SMART MSA data. [Link](https://www.cdc.gov/brfss/smart/smart_2016.html)
+
+
+```{r "setup", include=FALSE}
+require("knitr")
+opts_knit$set(root.dir = "~/Google Drive/classes/dem7283//class18/data/")
+
+```
+
+```{r}
+#load brfss
+library(car)
+library(stargazer)
+library(survey)
+load("~/Google Drive/classes/dem7283/class18/data/brfss16_mmsa.Rdata")
+
+#The names in the data are very ugly, so I make them less ugly
+nams<-names(brfss16m)
+head(nams, n=10)
+#we see some names are lower case, some are upper and some have a little _ 
+#in the first position. This is a nightmare.
+newnames<-tolower(gsub(pattern = "_",replacement =  "",x =  nams))
+names(brfss16m)<-newnames
+#Poor or fair self rated health
+#brfss16m$badhealth<-ifelse(brfss16m$genhlth %in% c(4,5),1,0)
+brfss16m$badhealth<-recode(brfss16m$genhlth, recodes="4:5=1; 1:3=0; else=NA")
+#race/ethnicity
+brfss16m$black<-recode(brfss16m$racegr3, recodes="2=1; 9=NA; else=0")
+brfss16m$white<-recode(brfss16m$racegr3, recodes="1=1; 9=NA; else=0")
+brfss16m$other<-recode(brfss16m$racegr3, recodes="3:4=1; 9=NA; else=0")
+brfss16m$hispanic<-recode(brfss16m$racegr3, recodes="5=1; 9=NA; else=0")
+
+brfss16m$race_eth<-recode(brfss16m$racegr3, 
+recodes="1='nhwhite'; 2='nh black'; 3='nh other';4='nh multirace'; 5='hispanic'; else=NA",
+as.factor.result = T)
+brfss16m$race_eth<-relevel(brfss16m$race_eth, ref = "nhwhite")
+
+#insurance
+brfss16m$ins<-recode(brfss16m$hlthpln1, recodes ="7:9=NA; 1=1;2=0")
+
+#income grouping
+brfss16m$inc<-ifelse(brfss16m$incomg==9, NA, brfss16m$incomg)
+
+#education level
+brfss16m$educ<-recode(brfss16m$educa,
+recodes="1:2='0Prim'; 3='1somehs'; 4='2hsgrad'; 5='3somecol'; 6='4colgrad';9=NA",
+as.factor.result=T)
+brfss16m$educ<-relevel(brfss16m$educ, ref='2hsgrad')
+
+#employment
+brfss16m$employ<-recode(brfss16m$employ1,
+recodes="1:2='Employed'; 2:6='nilf'; 7='retired'; 8='unable'; else=NA",
+as.factor.result=T)
+brfss16m$employ<-relevel(brfss16m$employ, ref='Employed')
+
+#marital status
+brfss16m$marst<-recode(brfss16m$marital,
+recodes="1='married'; 2='divorced'; 3='widowed'; 4='separated'; 5='nm';6='cohab'; else=NA",
+as.factor.result=T)
+brfss16m$marst<-relevel(brfss16m$marst, ref='married')
+
+#Age cut into intervals
+brfss16m$agec<-cut(brfss16m$age80, breaks=c(0,24,39,59,79,99))
+
+#BMI, in the brfss16ma the bmi variable has 2 implied decimal places,
+#so we must divide by 100 to get real bmi's
+
+brfss16m$bmi<-brfss16m$bmi5/100
+
+#smoking currently
+brfss16m$smoke<-recode(brfss16m$smoker3, 
+recodes="1:2='Current'; 3='Former';4='NeverSmoked'; else=NA", 
+as.factor.result=T)
+brfss16m$smoke<-relevel(brfss16m$smoke, ref = "NeverSmoked")
+
+```
+
+##Other logit model specifications
+In the basic logistic regression model, we assumed a dichotomous outcome 
+  * y = 0 or 1
+This is a very flexible type of model since we can write any number of outcomes as a dichtomous variable.
+
+Although the logistic regression model is very flexible, we may often run into other kinds of outcomes that it is not applicable to
+
+* E.g. A multiple choice outcome: A behavioral decision to migrate to a set of several possible new residences.
+* E.g. An ordered outcome with ranked levels: Liberal to conservative: Very liberal, somewhat liberal, somewhat conservative, very conservative
+
+These types of outcomes require other kinds of regression models to analyze them.
+
+###Logit model for ordinal outcomes
+Suppose we have an outcome with *J* ordered outcomes, and each person, i, has a response: $Y_{i}$, and we can write the probablity of a person having response level *J* as:
+$Pr(Y_ij = j)$ for J= 1 ... J
+
+For an ordered response it is easier to work with the *cumluative probablity function* or
+
+$Pr(Y_ij \leqslant  j)$
+
+So the probabilities increase in adjacent categories (ordered categories). I.e. 
+$$Pr(Y_ij \leqslant  3)>Pr(Y_ij \leqslant  2)>Pr(Y_ij \leqslant  1)$$
+Since we are using cumulative probabilities, we do not acutally have to estimate all *J* probabilities. We need only estimate *J-1* probabilites, due to the complementary rule of probability: 
+$$Pr(y=0) = 1-Pr(y>0)$$
+
+In order to construct a regression model, we have to link a linear function of covariates to these probabilities. A general depiction of this model can be thought of as a **latent trait model**, where a latent variable, *z* is not observable but continuous, but we can observe the discrete representation of it as the *J* categories, then we can write this as:
+
+$$\pi_{j-1} < Z{i} \leqslant \pi{j}$$
+or graphically as:
+
+```{r, echo=FALSE}
+x <- seq(0, 6, length=100)
+hx <- dnorm(x, mean = 3)
+plot(x, hx, type="l",xaxt="n", lty=2, ylab="Probability", xlab="Z")
+axis(side = 1, at = c(1,3,5), labels = c("J1", "J2", "J3"))
+text(x = .7, y=.01, labels = (expression(pi[1])), cex=2)
+text(x = 2, y=.1, labels = (expression(pi[2])), cex=2)
+text(x = 4, y=.1, labels = (expression(pi[3])), cex=2)
+text(x = 5.5, y=.01, labels = (expression(pi[4])), cex=2)
+segments(x0=1, y0=0, x1=1, y1=dnorm(1, mean = 3))
+segments(x0=3, y0=0, x1=3, y1=dnorm(3, mean = 3))
+segments(x0=5, y0=0, x1=5, y1=dnorm(5, mean = 3))
+title(main = "Latent Trait Model for Ordinal Outcome")
+```
+
+The most common model for an ordinal outcome such as this is the *Proportional Odds Model*. In this model, for each level of *J*, there is an intercept term, $\beta_{0j}$ which depends on the category, *J*. The other explantory variables *x* do not depend on the category *J*, however. This generates a model of the form:
+
+$$\text {log} \frac{\pi_1+\cdots +\pi_j}{\pi_{j+1}+\cdots +\pi_j} = \beta_{0j}+x'\beta$$
+The base assumption for this model is that each *x* variable affects the probability of J increasing by 1 level in the same way, for all transitions.  We can visualize this as:
+
+```{r, echo=FALSE}
+x<-seq(0, 6,.2)
+beta<-.05
+y<-beta*x
+plot(x,y, "l", ylim=c(0, .6), ylab="Log-odds", xlab="x", yaxt="n", xaxt="n")
+title(main="Proportional Odds model on log odds scale")
+abline(a = 0, b=beta)
+abline(a = .1, b=beta)
+abline(a = .2, b=beta)
+text(x = -.5, y=.2, labels =(expression(beta[0][1])), xpd=NA ,cex=1.5)
+text(x = -.5, y=.1, labels =(expression(beta[0][2])), xpd=NA ,cex=1.5)
+text(x = -.5, y=0, labels =(expression(beta[0][3])), xpd=NA ,cex=1.5)
+
+text(x = 6.5, y=.5, labels =(expression(j[1])), xpd=NA ,cex=1.5)
+text(x = 6.5, y=.4, labels =(expression(j[2])), xpd=NA ,cex=1.5)
+text(x = 6.5, y=.3, labels =(expression(j[3])), xpd=NA ,cex=1.5)
+
+```
+
+This model is attractive because we have a direct and consistent interpretation of our $\beta$'s in the model.  While this is nice, the assumption can be very weak in practice, with the $\beta$'s not being equal between categories. In other words, come covariates may affect the probability of certain transitions more than others. 
+
+We can evaluate the assumption generally by fitting a series of binomial logistic regressions and examining the $\beta$'s between them. This can be done by re-coding the outcome from a single ordered outcome to a series of binomial outcomes. For example:
+
+```{r}
+#General ordinal coding, with 5 being the worst and 1 being the best health
+brfss16m$generalhealth<-recode(brfss16m$genhlth,
+                               recodes="1:2=1;3=2;4:5=3; else=NA", as.factor.result = T)
+brfss16m$generalhealth<-relevel(brfss16m$generalhealth, ref = "1")
+brfss16m$healthnum<-car::recode(brfss16m$genhlth,
+                                recodes="1:2=1;3=2;4:5=3; else=NA", as.factor.result = F)
+
+#First we tell R our survey design
+options(survey.lonely.psu = "adjust")
+
+
+library(dplyr)
+sub<-brfss16m%>%
+  select(badhealth,healthnum,generalhealth, mmsaname, bmi,
+         agec,race_eth, marst, educ,white, black, hispanic,
+         other, smoke, ins, mmsawt, ststr) %>%
+  filter( complete.cases(.))
+
+#First we tell R our survey design
+options(survey.lonely.psu = "adjust")
+des<-svydesign(ids=~1, strata=~ststr, weights=~mmsawt, data =sub )
+
+```
+
+##Ordinal Regression example
+To fit an ordinal logit to survey data in R, we use the `svyolr` fucntion in the survey library. 
+
+```{r}
+#Here I fit three nested models for the health outcome
+fit.solr1<-svyolr(generalhealth~race_eth+educ+agec,des)
+summary(fit.solr1)
+#Calculate the AIC ourself
+fit.solr1$deviance+2*length(fit.solr1$coefficients)
+```
+
+Which gives us the results from the proportional odds model. In this case, we see that non-Hispanic blacks have higher odds of reporting poorer health, compared to non-Hispanic whites. We also see that as education increases, the odds of reporting poorer health decreases, while for lower leves of education, the odds of having worse health are higher. As age increases, the odds of reporting poorer health increases, compared to those <25 years of age. 
+
+Now we can "examine" the proportional odds assumption by fitting logits for each change
+
+```{r}
+ex1<-svyglm(I(healthnum>1)~race_eth+educ+agec,des, family="binomial")
+ex2<-svyglm(I(healthnum>2)~race_eth+educ+agec,des, family="binomial")
+```
+This is **NOT** a statistical test, just a a rough guide. Here, I plot the coefficients of each model. If the proportional odds is correct, and the assumption is ok, then all these should be "approximately" the same values.
+
+```{r}
+plot(coef(ex1)[-1], ylim=c(-3, 3), type="l",xaxt="n",
+     ylab="Beta", main=c("Comparison of betas for", " proportional odds assumption"))
+lines(coef(ex2)[-1], col=1, lty=2) 
+axis(side=1, at=1:12, labels=F)
+text(x=1:12, y=-4,  srt = 90, pos = 1, xpd = TRUE,cex=.8,
+     labels = c( "Hispanic", "Black","MultRace" ,"Other",
+                 "PrimarySch","SomeHS", "SomeColl", "CollGrad",
+                 "Age 24-39","Age 39-59" ,"Age 59-79", "Age 80+" ))
+legend("bottomright",col=c(1,1),lty=c(1,2), legend=c(">1", ">2"))
+
+lines(coef(fit.solr1)[c(-13:-16)], col=4, lwd=3)
+```
+
+Based on this, the effects appear to be pretty consistent across transitions. 
+
+```{r}
+
+#Just print the odds ratios, 
+round(exp(rbind(coef(ex1)[-1], coef(ex2)[-1])),3)
+
+```
+
+Which again shows us the effects are pretty consistent across transitions, just like the plot does. If anything the plot is easier to digest.
+
+###Non proportional assumption
+We can also fit a cumulative logit model where the coefficients are not assumed to be the same across transitions. This is an alternative model where we don't assume proportionality of the odds of the various transitions. We can't use survey design to do this however. 
+
+```{r}
+library(VGAM)
+#Proportional odds
+fit.vgam<-vglm(as.ordered(generalhealth)~race_eth+educ+agec,
+               brfss16m, weights =mmsawt/mean(mmsawt, na.rm=T),
+               family=cumulative(parallel = T, reverse = T))  #<-parallel = T == proportional odds
+summary(fit.vgam)
+
+#Nagelkerke R^2
+fit.null<-vglm(as.ordered(generalhealth)~1,
+brfss16m, weights =mmsawt/mean(mmsawt, na.rm=T),
+ family=cumulative(parallel = T, reverse = T))
+(1-exp((fit.vgam@criterion$deviance - fit.null@criterion$deviance)/485742))/(1-exp(-fit.null@criterion$deviance/485742))
+
+
+#Non-proportional odds
+fit.vgam2<-vglm(as.ordered(generalhealth)~race_eth+educ+agec,brfss16m,
+                weights =mmsawt/mean(mmsawt, na.rm=T),
+                family=cumulative(parallel = F, reverse = T))  #<-parallel = F == Nonproportional odds
+summary(fit.vgam2)
+fit.null2<-vglm(as.ordered(generalhealth)~1,
+brfss16m, weights =mmsawt/mean(mmsawt, na.rm=T),
+ family=cumulative(parallel = F, reverse = T))
+
+(1-exp((fit.vgam2@criterion$deviance - fit.null2@criterion$deviance)/485742))/(1-exp(-fit.null2@criterion$deviance/485742))
+
+AIC(fit.vgam)
+AIC(fit.vgam2)
+```
+
+Based on the AIC, the nonproportioal odds model fits better than the proportional odds model.
+
+There are other types of models for ordinal data. Another is the Adjacent categories model, which models:
+
+$$\text {log} \frac{\pi_{ij}}{\pi_{i{(j-1)}}} = \beta_{ij} , i = 1 , \cdots, I; \text{  } j= 2, \cdots, J$$
+
+```{r, warning=FALSE, message=FALSE}
+
+
+#Adjacent categories
+fit.acat<-vglm(as.ordered(generalhealth)~race_eth+educ+agec,brfss16m,
+               weights = mmsawt/mean(mmsawt, na.rm=T),
+               family=acat(parallel = F, reverse = T))
+summary(fit.acat)
+```
+
+###Multinomial Model
+We also commonly see a resonse variable with unordered categories for a response. Such as:
+
+  * A person is deciding whether to migrate to a set of possible new labor markets
+  * A person is deciding which of a set of possible child care arrangement to use
+  * A person is deciding which of a possible set of means by which to get to work
+  * The type of contraception a woman chooses
+
+These are example of what generally is called an alternative decision making  process. 
+
+A distribution commonly used for this type of outcome is the multivariate extension of the binomial distribution, known as the multinomial distribution.
+
+If you have an outcome with *J* *unordered* classes, then $\pi_1$, $\pi_2$, ..., $\pi_J$ are the probabilities of observing the *J* classes. Remember, $\sum_J \pi_j = 1$. 
+
+If we observe $y_1$ outcomes in the first category and $y_2$ outcomes in the second and so on, the let:
+
+$$\mathbf{y}=\begin{bmatrix}
+y_1\\ 
+y_2\\ 
+\vdots \\ 
+y_4
+\end{bmatrix}, with \sum_{j=1}^Jy_i = n$$
+
+In this case y follows the multinomial distribution:
+
+$$f(y|n)=\frac{n!}{y_1!y_2!\cdots y_j!} \pi_1^{y1}\pi_2^{y2}\cdots\pi_J^{yJ}$$
+
+When constructing a regression model for such a distrubution, we choose one level of the outcome as the **reference level** and compare the probabilty of chooseing other options to it. For example, if we modeled the probability of choosing option j to option 1 (as the reference level), the we would have the logistic regression model:
+
+$$logit(\pi_{j}) =log \left ( \frac{\pi_j}{\pi_1} \right)=x'_j\beta_j$$ 
+
+This makes *J-1* equations, again with the reference category estimated by the complementary rule. We then have a total of *J-1* regression equations to interpret, where we compare the odds of being in each of the other *j-1* categories to the reference category. If we want to estimate the probability of being in each particular class of the outcome, for a response with a given set of x values, we can solve the equation for $\pi_j$ as:
+
+$$\pi_j = \frac{exp(x'_j\beta_j)}{1+\sum_{j=2}^J exp(x'_j\beta_j)}$$
+
+This is a much more complicated model than the proportional odds model, and we will have many more effects to interpret, owing to the J-1 separate equations we are estimating. 
+
+Unfortunately, in R there is no multinomial survey design model, so we have to use VGAM again and feed the function our normalized weights.
+
+
+Now I fit the model, this is screwy looking because I have to use the `multinom()` function from the `nnet` library to fit the model and since I want to extract the equations from the model I have to use the `coef()` function. 
+```{r}
+mfit<-vglm(generalhealth~race_eth+educ+agec,
+           multinomial(refLevel = 1),brfss16m,
+           weights=mmsawt/mean(mmsawt, na.rm=T))
+
+summary(mfit)
+```
+
+
+Calculate the odds ratios and confidence intervals
+```{r}
+round(exp(coef(mfit)), 3)
+round(exp(confint(mfit)), 3)
+
+```
+
+So in these results, each row consists of an equation for a particular set of outcomes. 
+For example, let's interpret the first row, which corresponds to the model $Pr(\text{y='good health'})/Pr(\text{y='excellent/vg health'})$ which corresponts to the coefficent for `race_ethhispanic:1  `
+
+In this case, hispanics are more likely to report good instead of excellent/vg health, compared to NH Whites. This is also the case for NH blacks,others and multirace respondents. In terms of education, those with primary school and some highschool are more likely to report good, compared to excellent/vg health, compared to those with high school, but those with college educatoin are less likely to report good vs excellent/vg health, compared to those with high school. 
+
+
+Let's consider the second transition now. This corresponds to the model
+$Pr(\text{y='poor/fair health'})/Pr(\text{y='excellent/vg health'})$ . 
+In this case hispanics are more likely to report poor instead of excellent health, compared to NH Whites. This is also the case for NH blacks, Others and multirace respondents. In terms of education, those with less education(primary or some HS) are more likely to report poor, compared to excellent health, compared to those with high school education, while those with more education (some college or college grad) are less likely to report poor, compared to excellent health, compared to those with high school education.
+
+
+
+###Get Fitted Probabilities
+```{r}
+#get a series of predicted probabilites for different "types" of people for each model
+dat<-expand.grid(race_eth=levels(brfss16m$race_eth),
+                 educ=levels(brfss16m$educ), agec=levels(brfss16m$agec))
+
+#generate the fitted values
+#Unfortunately, the survey proportional odds model won't generate fitted values
+#but here I use a weighted multinomial model, which fits the data better anyway
+fitm<-predict(mfit, newdat=dat,type="response")
+#add the values to the fake data
+dat<-cbind(dat, round(fitm,3))
+
+#Print the fitted probabilities
+head(dat, n=20)
+
+```
+
+This will use `polr` with survey weights to get fitted probabilities from the proportional odds model. The fitted values are right, but the standard errors won't be.
+
+```{r}
+fitted.ord<-round(predict(fit.vgam, newdat=dat[,1:3], type="response"), 3)
+dat<-cbind(dat, fitted.ord)
+names(dat)<-c(names(dat)[1:3], "mp1", "mp2", "mp3", "op1", "op2", "op3")
+head(dat, n=20)
+```
+
+Let's look at the relative model fits:
+```{r}
+AIC(fit.vgam) #proportional odds
+AIC(fit.vgam2) #cumulative logit, non proportional
+AIC(mfit) #multinomial
+```
+
+Looks like the multinomial is the best fitting model, but it is very close to the nonproportional odds model using the cumlative logit.
