@@ -1,0 +1,298 @@
+---
+title: "DEM 7273 - Example 2 - Descriptive Statistics"
+author: "Corey Sparks, PhD"
+date: "August 30, 2017"
+output:
+  html_document:
+    keep_md: no
+  html_notebook:
+    toc: yes
+---
+
+This example will go through some conceptual issues we face when analyzing data, then we will cover some basic descriptive statistics and their ups and downs. We will describe measures of central tendency and variability and how these are affected by outliers in our data. 
+
+We then examine the 2015 American Community Survey microdata using some common tidyverse verbs. 
+
+
+##Units of Analysis
+We can measure phenomena at many levels
+
+* e.g. I can ask in a survey how much money each member of a household earned last year (individual level measurement), 
+  + or I can ask the head of the household, how much was the household's income last year (aggregate measure)
+  + or I can ask the Internal Revenue Service how much money was earned in Bexar county last year (higher- level aggregate measure)
+  
+* As a general rule, you should ALWAYS collect data at the individual level, and aggregate up to the household or the county. This also allows you to get a sense of variability.
+
+* If you collect data on households/counties only, you can never aggregate down to the individual. Likewise, you can never know about the variability within the larger unit
+
+##The Ecological Fallacy
+
+* Related to the idea of units of data collection is the concept of the ecological fallacy. This is the idea of drawing conclusions from the wrong level of analysis.
+
+  + i.e. you observe a relationship at the county level that suggest x affects y, and you conclude that this holds for individuals as well
+  + e.g. you note an association between %minority population in a county and the mortality rate (higher minority, higher mortality). You conclude from this that people who are minority members have higher risk of death.
+  
+This is not true, as everyone in the county has higher mortality chances, you assign an association based on aggregate data to an individual – **you have just committed the ecological fallacy**
+
+
+##Describing a Single variable
+###Measures of central tendency
+
+We can use graphical methods to describe what data 'look like' in a visual sense, but graphical methods are rarely useful for comparative purposes. In order to make comparisons, you need to rely on a numerical summary of data vs. a graphical one (I'm not saying statistical graphics aren't useful, they are!)
+
+Numerical measures tell us a lot about the form of a distribution without resorting to graphical methods. The first kind of summary statistics we will see are those related to the measure of *central tendency*. Measures of central tendency tell us about the central part of the distribution
+
+
+###Mode
+the most commonly occurring observation in the data. This is like the peak in a histogram – the point that occurs most often. This is an *actual value in the data*
+
+There may be more than one mode for a variable. This would be called a *multi-modal* variable. 
+Here is a unimodal dataset:
+
+```{r, echo=T}
+source("https://raw.githubusercontent.com/coreysparks/Rcode/master/mymode.R")
+#make a variable
+x<-rpois(1000, lambda = 20)
+
+#make another variable
+y<-c(rnorm(500, 20, 10), rnorm(500, 75, 10))
+
+
+mx<-Mode(x)
+Mode(x)
+
+#make some plots
+hist(x,main="Unimodal varable")
+abline(v=mx, col="red", lwd=3) #add the mode in as a red line
+hist(y,main="Multi-modal varable")
+
+
+```
+
+###Median
+the middle value when observations are ranked from highest to lowest. 
+The median divides the data into two groups of equal size, these are  called percentiles.
+
+Exactly 50% of the observations will be less than the median and 50% will be greater than the median.
+
+If two (or an even number) of the same values occur at the midpoint, their average is taken as the median.
+
+There is only one median for a variable, and it is an actual observed value, like the mode.
+
+```{r, echo=T}
+
+median(x)
+quantile(x)
+hist(x, main="Distribution of x")
+abline(v=median(x), col="red")
+
+plot(ecdf(x), main="Cumulative distribution function of x showing the median")
+abline(v=median(x), col="red")
+
+plot(ecdf(x), main="Cumulative distribution function of x showing quintiles")
+abline(v=quantile(x), col=rainbow(5))
+
+plot(ecdf(y), main="Cumulative distribution function of x showing the median")
+abline(v=median(y), col="red")
+
+plot(ecdf(y), main="Cumulative distribution function of x showing quintiles")
+abline(v=quantile(y), col=rainbow(5))
+
+```
+
+##Mean
+The *Arithmetic mean*  is the the average value of a variable.
+
+There is only one mean for a variable, and it doesn't necessarily have to be an observed value! It is a **parameter** of a distribution that we attempt to *estimate* using data.
+
+Because of the mean's usage in many more complicated settings, we give it special notation, the population mean is denoted using the Greek letter $\mu$. $\mu$ is never observed unless you have the entire population, we try to learn about $\mu$ by taking samples from the population. When we do this, we calculate the *sample mean*, noted as the variable name with a bar over it, or $\bar{x}$. $\bar{x}$ is calculated as:
+
+$\bar{x}=\frac{\sum_{i=1}^n x_i}{n}$
+
+The mean of a binary variable (0/1) is a proportion and is useful for finding the percent of observations that have the `1`.
+
+The mean is a useful statistic (and widely over used) to describe the central tendency of a distribution, but it can be severely affected by extreme values, called **outliers**
+
+Outliers are values that occur in the extreme tails of a distribution and can artificially inflate (or deflate) the mean value.
+
+Think of money in your pocket as an example, let's say we have among us on average `$22` in our pocket, but I won the lottery today and I have `$100,000` in my pocket. If we calculate the mean using my extreme observation we may get a much more inflated sense of how rich our class is!!
+
+Here is an example
+```{r}
+money<-rnorm(10, 20, 5)
+money
+mo_money<-c(money, 10000)
+mo_money
+
+mean(money)
+mean(mo_money)
+```
+
+
+To deal with this we may often use a *trimmed mean* , which drops the lowest and highest extreme values and takes the average of the rest. This reduces the effect of the extreme values and gives us a more realistic estimate for the mean. 
+
+We may in practice trim between 1 and 10 percent of observations from the tails to estimate the trimmed mean.
+
+Here, I compare the mean to 10% trimmed mean from the example above.
+
+```{r}
+mean(mo_money)
+mean(mo_money, trim=.1)
+
+```
+Much more realistic, and representative of the average amount of money in our pockets.
+
+
+#Measures of variation
+While measures of central tendency tell us something about the *centrality* of a variable, the variation in that variable is equally as important (maybe even more-so). 
+
+In fact the range is the simplest numerical depiction of variability. 
+`range = max(x)-min(x)`
+
+Unfortunately the range is very sensitive to outliers, remember our pocket money example
+```{r}
+
+max(money)-min(money)
+max(mo_money)-min(mo_money)
+
+```
+Also the range does not give us any idea about the pattern, or shape of the variability, only the difference between highest and lowest values.
+
+Another measure (and quickly becoming your instructor's favorite) are **percentiles**, or **quantiles** of the distribution. 
+
+There are p percentiles of the distribution and they each represent a location of the *cumulative distribution function*. The cumulative distribution function shows the sum of the probability that a value of a variable is at or below a particular value of the variable. 
+
+It is denoted $F(x)$, and $F(x)= Pr \left( X  \leqslant x \right )$
+
+If we arrange the data, say n cases, from lowest to highest value, the pth percentile of the data is the value at which we have observed p % of the data, and there is still 100- p% of observations above it.
+
+Certain percentiles are often used to describe distributions, for example the *quartiles* (25%, 50% (median), 75%) 
+
+The *Inter-quartile range* is another measure of variability and is typically calculated as the value of x at the 75th percentile the value of x at the 25th percentile.
+
+This isn't a terribly useful measure of variation but it can be useful when comparing the same variable measured in multiple data sets.
+
+One typical set of descriptive statistics that is very frequently used is the so-called **five number summary** and it consists of : the Minimum, lower quartile, median, upper quartile and maximum values. This is often useful if the data are not symmetric or skewed. This is what you get when  you use the `summary()` function in R.
+
+```{r}
+
+summary(x) #actually includes the mean too, so a 6 number summary
+
+#inter quartile range
+IQR(x)
+```
+
+###Variance
+If the data are symmetrically distributed around a single mode, two measures can usually describe the distribution : the mean and the sample variance
+
+The sample variance is calculated from the observation-specific deviations around the mean
+
+$\text{deviation = }x_i - \bar{x}$
+
+A variable with small average deviations from the mean will have a *lower degree of variability * compared to variables with high average deviations from the mean. This allows us to say *variances are smaller or larger* between two variables.
+
+Again, like the mean, the variance is a **parameter** of a distribution that we attempt to *estimate* using data. In the population, the variance is denoted $\sigma^2$, but again, this is unknowable using samples, so we resort to estimating the **sample variance** which is denoted as $s^2$.
+
+
+$s^2 =\frac{\sum_{i=1}^n \left( x_i - \bar{x}\right )^2}{n-1}$
+
+We use n-1 in the denominator, because in the calculation we have to first calculate the mean first. 
+
+The variance can be thought of as the average, squared deviation from the mean, which isn't terribly informative, so instead we typically take the square root of the variance, to have a measure that is on the same scale as the original variable. This is called the **standard deviation** and is
+
+$s = \sqrt{s^2}$
+
+```{r}
+var(x)
+sd(x)
+
+sqrt(var(x))#same as using sd()
+```
+
+##Really Real data example
+Now let's open a 'really real' data file. This is a sample from the 2015 1-year [American Community Survey](https://www.census.gov/programs-surveys/acs/) microdata, meaning that each row in these data is a person who responded to the survey in 2015. I get these, and you should too from the [Minnesota Population Center](https://pop.umn.edu) IPUMS data. The [IPUMS](https://usa.ipums.org/usa/) stands for "Integrated Public Use Microdata Series", and consists of individual person responses to decennial census returns going back to 1850, and the American Community Survey data from 2001 to the present. 
+
+I'm using data from the US, but there is an [IPUMS International](https://international.ipums.org/international/) data series too, which has data from 85 countries and over 300 censuses. 
+
+I've done an extract (do example in class) and stored the data in a stata format on [my github data site](https://github.com/coreysparks/data). The file we are using is called [usa_00045.dta](https://github.com/coreysparks/data/blob/master/usa_00045.dta). 
+
+There is also a codebook that describes the data and all the response levels for each variable in the data. They are also on my github data page, and called [Codebook_DEM7273_IPUMS2015](https://github.com/coreysparks/data/blob/master/Codebook_DEM7273_IPUMS2015.pdf). 
+
+I can read it from github directly by using the `read_dta()` function in the `haven` library:
+
+```{r load data}
+library(haven)
+ipums<-read_dta("https://github.com/coreysparks/data/blob/master/usa_00045.dta?raw=true")
+names(ipums) #print the column names
+
+```
+
+Now, most variables in the IPUMS can't be used out of the box. For example open the pdf codebook and find the variable "incwage", which is person's income from wages in the previous year. 
+
+We are specifically wanting to pay attention to the "Coder Instructions" *you're the coder*. Notice two codes (values) that are of special note. *Specific Variable Codes 999999 = N/A and 999998=Missing*
+
+So, if we did something silly like:
+```{r, warning=F}
+mean(ipums$incwage)
+
+```
+
+This is probably not a valid answer, since the 99999 things are polluting our data. So we must recode our data to get rid of such values. 
+
+Remember, the `$` allows us to get a specific variable from a dataset and do something to it.
+
+```{r recodeipums, echo=TRUE}
+library(dplyr)
+
+#mynewdat<- ipums%>%
+ipums%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA, incwage))%>%
+  summarise(meanold=mean(incwage), meannew=mean(mywage, na.rm=T), n=n())
+  #as.data.frame()
+```
+
+and we see a difference of an order of magnitude in the mean, what about the median?
+```{r ipums2, echo=TRUE}
+ipums%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA, incwage))%>%
+  summarise(medianold=median(incwage), mediannew=median(mywage, na.rm=T), n=n())
+```
+Ok, so that seems really low, maybe we should limit the data to only those people who are in the labor force and who are over 18.
+
+```{r ipums3, echo=TRUE}
+ipums%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA, incwage))%>%
+  filter(labforce==2, age>=18) %>%
+  summarise(mednold=median(incwage), mednew=median(mywage, na.rm=T), n=n())
+
+
+
+```
+
+Nice.
+
+Now what if we wanted to compare the incomes of men to women?
+```{r ipums4, echo=TRUE}
+ipums%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA, incwage))%>%
+  filter(labforce==2, age>=18) %>%
+  mutate(sexrecode=ifelse(sex==1, "male", "female")) %>%
+  group_by(sexrecode)%>%
+  summarise(mednew=median(mywage, na.rm=T), sdwage=sd(mywage, na.rm=T), n=n())
+
+
+
+```
+and we see that men have higher median incomes than women, but the variance in male income is larger than for women. 
+
+
+We could also see how incomes are different in San Antonio (met2013==41700) compared to Dallas (met2013==19100).
+```{r ipums5, echo=TRUE}
+ipums%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA, incwage))%>%
+  filter(labforce==2, met2013%in%c(41700, 19100), age>18) %>%
+  mutate(sexrecode=ifelse(sex==1, "male", "female"), city=ifelse(met2013==41700, "San Antonio", "Dallas")) %>%
+  group_by(sexrecode, city)%>%
+  summarise(medinc=median(mywage, na.rm=T),meaninc=mean(mywage, na.rm=T), sdwage=sd(mywage, na.rm=T), n=n())
+```
+

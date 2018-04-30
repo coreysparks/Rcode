@@ -1,0 +1,324 @@
+---
+title: "DEM 7273 Example 6 - Comparing multiple groups with the linear model - ANOVA"
+author: "Corey S. Sparks, PhD"
+date: "September 27, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###Comparing More than two groups
+We have seen how to compare 2 groups using the linear model, as compared to the two sample t-test. Now we move on to comparing more than two groups. Traditionally, this would be done using a statistical tool called the analysis of variance (ANOVA). This method, although it has "variance" in the name really is used to compare central tendency (means) between multiple groups. 
+
+We have seen so far that we can calculate the amount of variation within a sample using the *sample variance*. This is, for each group in our data, the *within group variance*. The ANOVA works by comparing the amount of within group variation to the amount of *between group variation*. This is a different concept, that we will describe below. 
+
+The idea is that, if the amount of between group variance is low, compared to the amount of within group variance, then the means of the different groups are similar to one another. Here is what this may look like:
+
+```{r, echo=F, fig.width=7, fig.height=5}
+g1<-rnorm(300, 10, 5)
+g2<-rnorm(300, 30, 5)
+g3<-rnorm(300, 30, 5)
+
+
+plot(density(g1), xlim=c(0, 60), ylim=c(0, .1), main="High variance between group means", sub="")
+lines(density(g2), col=2)
+lines(density(g3), col=3)
+abline(v=mean(g1));abline(v=mean(g2), col=2); abline(v=mean(g3), col=3)
+ybardotdot=mean(c(g1, g2, g3))
+ybardotdot
+abline(v=ybardotdot, col=1, lty=3, lwd=5)
+
+
+
+g1<-rnorm(300, 20, 5)
+g2<-rnorm(300, 15, 5)
+g3<-rnorm(300, 25, 5)
+
+ybardotdot=mean(c(g1, g2, g3))
+ybardotdot
+abline(v=ybardotdot, col=1, lty=3, lwd=5)
+
+ybar1=mean(g1)
+ybar2=mean(g2)
+ybar3=mean(g3)
+
+ybar1 -c(ybar2, ybar3)
+
+fake<-data.frame(y=c(g1, g2, g3) , group=c(rep("A", 300), rep("B", 300), rep("C", 300)))
+summary(lm(y~group, data=fake))
+ybar1; ybar2; ybar3
+
+tss<-sum(( c(g1, g2, g3) - ybardotdot)^2)
+tss
+
+var(c(g1, g2, g3))*899
+
+g1<-rnorm(100000, 15, 10)
+g2<-rnorm(100000, 16, 10)
+fake<-data.frame(y=c(g1, g2) , group=c(rep("A", 100000), rep("B", 100000)))
+summary(lm(y~group, data=fake))
+
+
+plot(density(g1), xlim=c(0, 60), ylim=c(0, .1), main="Low variance between group means", sub="")
+lines(density(g2), col=2)
+lines(density(g3), col=3)
+abline(v=mean(g1));abline(v=mean(g2), col=2); abline(v=mean(g3), col=3)
+
+
+```
+
+The first figure shows the example where the means of three groups (vertical lines) are very different from one another. The amount of within group variation is the same.
+
+The second figure shows the example where the means of three groups (vertical lines) are similar to one another. The amount of within group variation is the same.
+
+The graphs are nice, but we need a statistical way to compare the distributions of these groups. 
+
+####Remember the two group case?
+Now we want to extend this logic to more than 2  groups. In the two group case, we were testing the null hypothesis
+$H_0 : \mu_1=\mu_2$, that the 2 group means were equal
+- Now we are testing the hypothesis
+- $H_0 : \mu_1=\mu_2= \cdots = \mu_k$, or that the k group means are equal, verses the alternative that they are not *all* equal. This alternative hypothesis does not specify *which* means are different, just that they are not *all* equal, so, the alternative hypothesis for 3 groups, for example would be : $H_A: \mu_1\neq\mu_2 \text{ or } \mu_1\neq\mu_3 \text{ or } \mu_2\neq\mu_3$
+
+One method of doing this is to simply do 3 different t-tests one for each of the null hypotheses. We run into problems with this, because as the number of pair-wise tests increases, the probability of falsely rejecting one of the alternative hypotheses increases (type I error).
+
+Although we may have set our holy alpha value at .05, the actual probability of rejecting any of our null hypotheses is smaller. It's more like .05/#of tests
+
+So instead of doing lots of pair wise t-tests, we test for general variation among the means simultaneously using the analysis of within and between group variance. **Enter the ANOVA table**
+
+In the two group case, the within group variance is:
+
+$s_w = \frac{(n_1-1)s^2_1+(n_2-1)s^2_2}{n1+n2-2}$
+
+This is cute for two groups, but as the number of groups increases, we need a more general formula for within sample variation, and we also need a formula for between sample variation.
+
+####General forms of within and between group variation
+Some notation first:
+$\bar{y_{..}}$ = the grand mean (mean of all observations) = $\bar{y_{..}}= \sum_{i=1}^{n} y_{ij}/n$
+$\bar{y_{j.}}$ = the mean of the jth group = $\bar{y_{j.}}= \sum_{i=1}^{n} y_{ij}/n_j$
+
+Now we express each individual relative to the grand mean and the group means.
+
+The total amount of variation in the sample is the **Total Sums of Squares**:
+$TSS = \sum_{i=1}^n \sum_{j=1}^{n_j}(y_{ij} - \bar{y_{..}})^2 = (n-1)s_T^2$
+
+We can partition the TSS into sources, one source within, and one source between groups. 
+
+$TSS = \sum(y_{ij} - \bar{y_{..}} )^2=\sum_j (y_{ij} -\bar{y_{j.}})^2+\sum_i (\bar{y_{j.}} -\bar{y_{..}})^2x$
+
+The first quantity on the right captures the deviations of the $n_j$ observations from
+the mean of group j, and is a measure of the within sample variation, SSW
+
+$SSW = \sum_{ij}(y_{ij}-\bar{y_{..}})^2$
+
+The second quantity captures the deviations of the j group means from the grand mean, and is a measure of between group variation, SSB.
+
+$SSB = \sum_i n_i (\bar{y_{j.}} - \bar{y_{..}})^2$
+
+using these three quantities, we can calculate estimates of the within group varince ($s_w^2$), the between group variance ($s_B^2$).
+
+$s_w^2 = \frac{SSW}{n-k}$
+
+$s_B^2= \frac{SSB}{k-1}$
+
+k-1 and n-k are the *degrees of freedom* for $s_B^2$ and $s_w^2$
+
+These terms are also called the mean squares, becuase the represent average deviations around the group means and the grand mena, respectively.
+
+These numbers are usually presented in what's called the *ANOVA Table*, along with an F-test, which is $F = s_B^2/s_w^2$. Finally a useful measure of overal model fit is often presented, which is the model $R^2$. $R^2= SSB/SST$ and is the percent of variation in the outcome that is explained by the model, in this case, the differences between the groups.  
+
+
+#More Linear statistical models
+The ANOVA model can be written:
+
+$y_i = \beta_0 + \tau_j + \epsilon_{ij}$
+
+ This model states that we can write the ith observation of the jth group as the product of three terms: the grand mean, $\beta_0$, a group-specific deviation (effect) from the grand mean, $\tau_j$, both of which are parameters to be estimated. The final term,$\epsilon_{ij}$, represents the random
+deviation of each observation around the grand mean. The ??ij are often referred to as the "error term", since it only represents residual variation of individuals from the mean. This residual variation is just variation that is not attributable to the group structure. We assume the $\epsilon_{ij}$'s are Normally distributed with constant variance. 
+
+The interpretation of this model really focuses on the $\tau_j$ terms. These represent the differences in the means of the groups from the grand mean. They may be positive, negative or zero. The ANOVA model specifies the test of the hypothesis that all means are equal using the model terms:
+
+ $H_0 : \tau_1=\tau_2= \cdots = \tau_j =0$
+versus the alternative hypothesis that at least one of the $\tau_j$'s are note 0.
+
+###Post hoc tests
+The ANOVA model is good for examining if there is a global difference in means
+-i.e. at least two of the groups have different means, but it tells nothing about which groups are
+different from which other group.  This is the realm of so-called *post hoc tests*, Latin for "Occurring or done after the event", where the event is the ANOVA F test. This basically involves doing all "pairwise" comparisons between the groups in the analysis.
+
+- This is done only after evidence of a significant F test from the ANOVA!
+- It is customary to recalculate the alpha level based on the number of tests being done, again to avoid the type I error. These are typically called "post hoc corrections" and there are a lot of them. I will use the Bonferroni correction in all my examples.
+
+
+###Linear model to compare multiple groups.
+So, this would be how I would write a linear model to compare more than two group means. **This assumes your dependent variable is continuous.** This acutally works just like the [previous example](http://rpubs.com/corey_sparks/310060) of comparing two means. 
+
+The model we are using is:
+
+$y_i = \beta_0 + \tau_j + \epsilon_{ij}$
+
+Assuming:
+
+$\epsilon_i \sim \text{Normal}(0, \sigma^2_{\epsilon})$
+
+Now we do the test using the PRB data. Here, we will test if the TFR is the same across continents, not just between Africa and Not African countries.
+
+```{r, message=F, warning=FALSE}
+library(broom)
+library(readr)
+library(dplyr)
+library(ggplot2)
+prb<-read_csv("https://raw.githubusercontent.com/coreysparks/data/master/PRB2013_new.csv", col_names=T)
+names(prb)<-tolower(names(prb))
+```
+
+```{r}
+#summary statistics by group
+prb%>%
+  group_by(continent)%>%
+  summarise(means=mean(tfr, na.rm=T), sds=sd(tfr, na.rm=T), n=n())
+
+#boxplot
+prb%>%
+  ggplot(aes(x=continent, y=tfr))+geom_boxplot()+ggtitle(label = "Total Fertility Rate Across Continents")
+```
+
+Our models are fit again using `lm()`, and we will use the `anova()` function to do our F test.
+
+```{r}
+tfr_fit<-prb%>%
+  lm(tfr~continent, data=.)
+anova(tfr_fit)
+```
+
+The F test shows that there is significant variation between continents in our analysis. But we do not know which continents are different from each other. We can perform the post hoc tests to see that:
+```{r}
+pairwise.t.test(x = prb$tfr,g = prb$continent,p.adjust.method = "bonf")
+
+```
+
+We can also examine the $\tau_j$'s from our model. These are equivalent to the previous example, when we tested if $\beta_1$ was not 0.
+```{r}
+tidy(tfr_fit)
+
+```
+
+So, we have here the deviations of each continent's mean from the mean of the "reference group". In this case, Africa was chosen as the reference group, since it came first alpha-numerically. If we want to see how each group differs from the "world mean" we can adust how R does the comparisons.
+
+```{r}
+prb$continent2<-relevel(as.factor(prb$continent),ref = "North America")
+tfr_fit2<-lm(tfr~continent2, data=prb)
+tidy(tfr_fit2)
+
+```
+
+Again, we can check the means using summarise:
+```{r}
+cont_means<-prb%>%
+  group_by(continent2)%>%
+  summarise(means=mean(tfr, na.rm=T), sds=sd(tfr, na.rm=T), n=n())
+cont_means$diff<-cont_means$means-cont_means$means[1]
+cont_means
+```
+And we see that the column labeled "diff" is the same as the parameters estimated in the `tfr_fit2` model, above.
+
+
+#Wait!
+
+We need to evaluate a key assumption about the errors of the model. 
+
+```{r fig.width=7, fig.height=6 }
+qqnorm(rstudent(tfr_fit), main="Q-Q Plot for Model Residuals")
+qqline(rstudent(tfr_fit), col="red")
+```
+
+Not bad, if everything was perfect, then all the dots would line up on the line.
+
+There's a formal, but overly sensitive test for normality that we can use here:
+
+```{r}
+shapiro.test(resid(tfr_fit))
+```
+
+Which fails the normality test. This is pretty important assumption of the linear model in many settings, here not so much. But we should do our due diligence. If you have evidence of non-normality of your residuals, you can attempt to transform the dependent variable via a set of approaches. 
+
+###Typical transformations
+Things we can try are the:
+natural log transform = `log(x)`
+square root transform  = `sqrt(x)`
+reciprocal transformation = `1/x`
+
+
+We'll try the log transform first:
+
+```{r}
+tfr_fit3<-lm( log(tfr)~continent, data=prb)
+qqnorm(rstudent(tfr_fit3), main="Q-Q Plot for Model Residuals")
+qqline(rstudent(tfr_fit3), col="red")
+shapiro.test(resid(tfr_fit3))
+
+```
+
+AHHHHH! SOOO close!
+
+
+##Really Real data example
+Now let's open a 'really real' data file. This is a sample from the 2015 1-year [American Community Survey](https://www.census.gov/programs-surveys/acs/) microdata, meaning that each row in these data is a person who responded to the survey in 2015. 
+
+I've done an extract (do example in class) and stored the data in a stata format on [my github data site](https://github.com/coreysparks/data). The file we are using is called [usa_00045.dta](https://github.com/coreysparks/data/blob/master/usa_00045.dta). 
+
+There is also a codebook that describes the data and all the response levels for each variable in the data. They are also on my github data page, and called [Codebook_DEM7273_IPUMS2015](https://github.com/coreysparks/data/blob/master/Codebook_DEM7273_IPUMS2015.pdf). 
+
+I can read it from github directly by using the `read_dta()` function in the `haven` library:
+
+```{r}
+library(haven)
+ipums<-read_dta("https://github.com/coreysparks/data/blob/master/usa_00045.dta?raw=true")
+
+newpums<-ipums%>%
+  filter(labforce==2, age>=18, incwage>0)%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA,incwage),
+         sexrecode=ifelse(sex==1, "male", "female"))%>%
+  mutate(race_eth = case_when(.$hispan %in% c(1:4) & .$race %in%c(1:9) ~ "hispanic", 
+                          .$hispan ==0 & .$race==1 ~"nh_white",
+                         .$hispan ==0 & .$race==2 ~"nh_black",
+                         .$hispan ==0 & .$race%in%c(3,7,8,9) ~"nh_other",
+                         .$hispan ==0 & .$race%in%c(4:6) ~"nh_asian",
+                          .$hispan==9 ~ "missing"))
+newpums%>%
+  group_by(race_eth)%>%
+  summarise(meaninc=mean(mywage, na.rm=T), sds=sd(mywage, na.rm=T), n=n())
+  
+newpums$logwage<-log(newpums$mywage)
+
+#box plot by race/ethnicity
+newpums%>%
+   ggplot(aes(x=race_eth, y=logwage))+geom_boxplot()
+
+#histogram by race/ethnicity
+newpums%>%
+   ggplot(aes(logwage, fill=race_eth))+geom_histogram(aes(y=0.5*..density..))+facet_wrap(~race_eth)+ggtitle(label = "Log-Wage by Race/Ethnicity")
+
+#ANOVA model
+newpums$race_eth<-relevel(as.factor(newpums$race_eth), ref = "nh_white")
+
+raceinc<-newpums%>%
+  lm(mywage~race_eth, data=.)
+
+anova(raceinc)
+
+pairwise.t.test(x = newpums$mywage,g = newpums$race_eth,p.adjust.method = "bonf")
+
+tidy(raceinc)
+```
+So, NH- White's make an average of `r coef(raceinc)[1]` dollars, Hispanics make `r abs(coef(raceinc)[2])` less on average than NH whites, NH Asians make `r abs(coef(raceinc)[3])` more than NH whites, NH blacks make `r abs(coef(raceinc)[4])` less than NH whites, and NH other's make `r abs(coef(raceinc)[5])` less than NH whites.
+
+
+*Normality checks*
+```{r}
+qqnorm(rstudent(raceinc))
+qqline(rstudent(raceinc), col=2)
+```
+
+

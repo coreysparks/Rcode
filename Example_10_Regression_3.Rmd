@@ -1,0 +1,148 @@
+---
+title: "DEM 7273 - Regression Analysis Part 3"
+author: "Corey S. Sparks, PhD"
+date: "November 1, 2017"
+output: 
+  html_document: 
+    toc: yes
+---
+
+
+##Multiple Regression models
+
+Remember our model from last time:
+
+$y_i =  \beta_0 +\sum_i ^p \beta_p * x_{ip} + \epsilon_i$ 
+
+We described how the coefficients of the model are estimated (least squares), how to test hypotheses about the coefficients of the model, as well as how to include qualitative predictors and how to produce standardized coefficients. 
+
+This example will illustrate how to deal with issues of model fit and comparing the fits of nested regression models. 
+
+##Correlation among predictors
+A very real situation that exists in real data is the correlation between predictors. If two variables are perfectly correlated with one another, they are said to be **collinear** with one another.  In general, if predictors are correlated, we have a **multicollinearity** condition between some of our predictors.  If the correlations are small, this should have little effect, however if they are sizable, the effect could be very important for the statistical interpretation of our models.
+
+###Detecting multicollinearity
+- One method is to examine the correlation coefficients among the predictor variables. If variables are highly correlated, say >.4, we may consider removing one of them. Another method is by examination of the regression coefficients of the model. When the coefficients of the model change substantially when another variable is added to the model. This is often indicative that the variables may be related or an **interaction** may be present between variables. 
+
+###Variance inflation factor
+- An often used measure of multicollinearity among predictors is the *variance inflation factor*. This measures the degree to which the standard errors of the coefficients are inflated when predictors are correlated, compared to
+when predictors are uncorrelated. If the VIF = 1 then the predictors are effectively uncorrelated, as the VIF gets larger than 1, there is growing evidence of multicollinearity. As a rule of thumb, a VIF of 10 or more is serious evidence of a problem.
+
+
+```{r, message=F, warning=FALSE}
+library(readr)
+library(car)
+library(dplyr)
+prb<-read_csv(file = "https://raw.githubusercontent.com/coreysparks/data/master/PRB2008_All.csv", col_types = read_rds(url("https://raw.githubusercontent.com/coreysparks/r_courses/master/prbspec.rds")))
+names(prb)<-tolower(names(prb))
+
+prb<-prb%>%
+  mutate(africa=ifelse(continent=="Africa", 1, 0))
+```
+
+Now we fit a multiple regression model with continuous and categorical predictors:
+
+```{r}
+fit0<-lm(tfr~scale(e0total)+scale(gnippppercapitausdollars)+scale(percpoplt15)+africa, data=prb)
+fit<-lm(tfr~scale(e0total)+scale(gnippppercapitausdollars)+scale(cdr)+scale(percpoplt15)+africa, data=prb)
+summary(fit)
+```
+
+Now we examine basic correlation among predictors:
+```{r}
+
+cor(prb[, c("e0total", "gnippppercapitausdollars", "africa", "cdr", "percpoplt15")], use = "pairwise")
+
+```
+
+So, we see everything is pretty correlated, but does this correlation translate in a collinearity problem? We use the `vif()` function in the `car` library to examine the variance inflation factors for the variables in the model:
+
+```{r}
+vif(fit)
+```
+
+So, we see a problem because the VIF of e0total is 14.7. This suggests that it's collinear with something else in the model. I suspect it's the crude death rate (because they both measure mortality in a way).
+
+One way to deal with this would be to construct an index of these two variables. While there are lots of ways to to this, a simple technique is to do an additive index of their z-scores:
+
+```{r}
+prb$mort<-scale(prb$e0total)+scale(-1*prb$cdr)
+fit2<-lm(tfr~mort+scale(gnippppercapitausdollars)+scale(percpoplt15)+africa, data=prb)
+summary(fit2)
+
+vif(fit2)
+```
+
+So we no longer have that issue. The solution presented above is a crude form of *variable reduction* where, when multiple variables are correlated in a regression model, you may choose to reduce the total number of variables in the model by performing some sort of variable reduction. The method above is one such way, another popular method is **principal components analysis**.
+
+
+##Comparing model fits
+Often times we will not be interested in only one regression model. More often, we will have multiple models that you consider for an analysis. Typically these are constructed in a **nested** fashion, meaning that you enter predictors into the analysis in **blocks**. The goal here is typically two-fold. First, we wish to make a model that is more complete, so we add more variables to the model, these typically would be cohesive in some way (add variables that measure SES for instance), Secondly, we have a particular independent variable and we are trying to "control away" the effect. You see a lot of this in the health literature.
+
+Regardless of why you are making nested models, you need to test whether the more complicated models fit the data better than a simpler model  (fewer parameters). For the linear model this is done with two tools. First is the F-test on the residual sums of squares between the two models. Second is the sd Information Criteria, which judges relative model fit, while penalizing overly complex models.
+
+Let's fit a couple of models using the IPUMS data:
+
+
+```{r}
+library(haven)
+library(dplyr)
+ipums<-read_dta("https://github.com/coreysparks/data/blob/master/usa_00045.dta?raw=true")
+
+newpums<-ipums%>%
+  filter(labforce==2, age>=18, incwage>0)%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA,incwage),
+         sexrecode=ifelse(sex==1, "male", "female"))%>%
+  mutate(race_eth = case_when(.$hispan %in% c(1:4) & .$race %in%c(1:9) ~ "hispanic", 
+                          .$hispan ==0 & .$race==1 ~"0nh_white",
+                         .$hispan ==0 & .$race==2 ~"nh_black",
+                         .$hispan ==0 & .$race%in%c(3,7,8,9) ~"nh_other",
+                         .$hispan ==0 & .$race%in%c(4:6) ~"nh_asian",
+                          .$hispan==9 ~ "missing"))%>%
+  mutate(edurec = case_when(.$educd %in% c(0:61)~"nohs", 
+                            .$educd %in% c(62:64)~"hs",
+                            .$educd %in% c(65:100)~"somecoll",
+                            .$educd %in% c(101:116)~"collgrad", 
+                            .$educd ==999 ~ "missing"))
+
+#newpums$race_eth<-as.factor(newpums$race_eth)
+#newpums$race_eth<-relevel(newpums$race_eth, ref = "nh_white")
+```
+
+Here we will fit three models. First, we need to make sure we have complete cases for all our variables, or we cannot compare the models to one another (they are not fit on the same dataset).
+
+- The first model only includes age and sex. The second model adds race/ethnicity and the third model adds education. We can use the `anova()` function to compare multiple models to one another using the F test.
+
+```{r}
+mod1<-lm(log(mywage)~scale(age)+scale(I(age^2))+sexrecode, data=newpums)
+mod2<-lm(log(mywage)~scale(age)+scale(I(age^2))+sexrecode+race_eth, data=newpums)
+mod3<-lm(log(mywage)~scale(age)+scale(I(age^2))+sexrecode+race_eth+edurec, data=newpums)
+
+
+anova(mod1,mod2, mod3)
+```
+
+The AIC is another method that judges relative model fit. It is constructed as:
+$$\text{AIC}  = \text{RSS} + 2k$$
+
+where RSS is $\sum (y_i - \hat{y_i})^2$, or the residual sums of squares and k is the number of parameters in the model. The `AIC` function can get this for us. Typically we would only consider a model to fit better if the change in AIC score is greater than 10.
+
+```{r}
+AICs<-AIC(mod1, mod2, mod3)
+AICs$diff<-AICs$AIC-AICs$AIC[1]
+AICs
+```
+So we conclude that the third model fits best of the three considered here. Not to say it's the *best* model we **could** fit, only that it's best out of what we've done here.
+
+###Presenting nested models
+We can make a nice looking table (we can make it look nicer with a little code!)
+```{r, results='asis'}
+library(stargazer)
+
+stargazer(mod1, mod2, mod3, type = "html", style = "demography", ci = T)
+```
+
+
+
+
+         

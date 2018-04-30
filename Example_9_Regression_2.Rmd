@@ -1,0 +1,270 @@
+---
+title: "DEM 7273 - Regression Analysis Part 2"
+author: "Corey S. Sparks, PhD"
+date: "November 1, 2017"
+output: 
+  html_document: 
+    toc: yes
+---
+
+
+We saw last time the case of a simple regression analysis, where we have one predictor variable
+- We saw how to describe the relationship between the predictor and the dependent variable, how to test the null hypothesis that this relationship is 0, and various diagnostic criteria for testing the assumptions of the Ordinary Least Squares (OLS) regression model
+
+##Multiple regression analysis
+- We now consider the more complicated, but inherently more interesting case where we have more than one predictor variable in our analysis, and we determine the influence of each of these predictors on the dependent variable.
+- This is the more realistic form of analysis, as any regression model you ever construct is bound to have multiple predictors
+- **Especially if you stay in demography**
+
+
+####Simple regression model
+- Remember from last time that the simplest regression model is one with one outcome variable and one predictor.
+- Suppose we have the Total Fertility Rate (TFR) for a country and the we want to examine the relationship between the TFR and life expectancy, we could write the simple regression:
+
+$TFR_i = \beta_0 +\beta_1 * \text{life expectancy}_i + \epsilon_i$ 
+
+- Where $\beta_0$ is the model intercept (mean of y when x=0), $\beta_1$ is the slope relating Life expectancy to the TFR and $\epsilon_i$ is the residual(unexplained) term of the model. The residual term is the unexplained random variation for each
+individual country, not accounted for by the independent variables.
+
+The *Multiple regression model* adds other terms to this model, but we are still well within our beloved linear model framework. For instance, if we were to include the gross domestic product of the countries in our analysis, we could re-write our model as:
+
+$TFR_i = \beta_0 +\beta_1 * \text{life expectancy}_i +\beta_2 * \text{GDP}_i \epsilon_i$ 
+
+- so we are trying to predict the ith observation's dependent variable using two predictor variables. We interpret the effects of these variables on out outcome using the direction and magnitude of the $\beta_1$ and $\beta_2$ parameters. 
+
+- The assumptions of this model are the same as for the simple linear regression model:
+- Independence of the errors,
+- constant variance (homoskedasticity)
+- Normality of the error terms
+- Linearity of the relationship
+
+###More predictors
+- We can easily incorporate more than 2 predictors in the model as other additive terms. A generalization of our model would be:
+
+$y_i =  \beta_0 +\sum_i ^p \beta_p * x_{ip} + \epsilon_i$ 
+
+We can also pull the $\beta_0$ term inside the sum, and just write:
+
+$y_i = \sum_i ^p \beta_p * x_{ip} + \epsilon_i$ 
+
+This is true, because, if we look at what the computer actually sees in the linear model *design matrix*, there is actually another column of information,  a vector of 1's, added on the right hand side:
+
+###Matrix form of the linear model
+If we have a linear model with two predictors:
+$y_i =  \beta_0 +\beta_1* x_{1i} + \beta_2* x_{2i}+ \epsilon_i$ 
+
+The computer arranges these values into a series of matrices:
+
+$$\begin{pmatrix}
+y_1\\ 
+y_2\\ 
+\vdots \\ 
+y_n\\
+\end{pmatrix} = \begin{pmatrix}
+1 & x_{11} &x_{12}\\ 
+1 & x_{12} &x_{22}\\ 
+\vdots & \vdots & \vdots\\ 
+1 & x_{1n} &x_{2n}\\
+\end{pmatrix} * 
+\begin{pmatrix}
+\beta_0\\ 
+\beta_1\\ 
+\beta_2\\
+\end{pmatrix} + \begin{pmatrix}
+\epsilon_1\\ 
+\epsilon_2\\ 
+\vdots \\ 
+\epsilon_n\\
+\end{pmatrix}$$
+
+This equation can be solved for the $\beta$'s using the Gauss Markov theorem :
+
+$$\mathbf{\beta} = (\mathbf{X'X})^{-1} \mathbf{X'Y}$$
+where the `'` indicates a matrix transpose, and the `-1` indicates a matrix inverse. This is just a more compact notation of what we saw last time, where we solved for 
+
+$\beta_1 = \frac {\sum (x_i - \bar{x})(y_i - \bar{y})}{\sum (x_i - \bar{x})^2}$
+
+In the matrix equation above, the $\mathbf{X'X}$ term is the denominator, and referred to as the *sums of squares* matrix, the term $\mathbf{X'Y}$ is the numerator from the simple regression equation and referred to as the *cross-products* matrix. The matrix inverse is the same thing as dividing, so what we saw last time generalizes out to any dimension of x. 
+
+We can see the math in action as:
+
+```{r, message=F, warning=FALSE}
+library(broom)
+library(readr)
+library(dplyr)
+library(ggplot2)
+prb<-read_csv(file = "https://raw.githubusercontent.com/coreysparks/data/master/PRB2008_All.csv", col_types = read_rds(url("https://raw.githubusercontent.com/coreysparks/r_courses/master/prbspec.rds")))
+names(prb)<-tolower(names(prb))
+
+#prb2<-prb%>%na.omit(tfr, e0total,gnippppercapitausdollars )
+prb2<-prb[ c("tfr", "e0total","gnippppercapitausdollars" )]
+prb2<- prb2[complete.cases(prb2),]
+
+y<-as.matrix(prb2[,"tfr"])
+x<-as.matrix(cbind(1, prb2[ c("e0total","gnippppercapitausdollars" )]))
+
+solve(t(x)%*%x)%*%(t(x)%*%y)
+```
+
+Which matches the easy way:
+```{r}
+fit<-lm(tfr~e0total+gnippppercapitausdollars, data=prb)
+coef(fit)
+
+```
+
+The regression line is then: 
+
+$TFR_i =$ `r round(coef(fit)[1],3)` + `r round(coef(fit)[2],3)` * $\text{life expectancy}_i$ + `r round(coef(fit)[3],7)`* $\text{life expectancy}_i$ 
+
+- so, we observe a negative relationship between the TFR and life expectancy (as seen in the negative $\beta_1$ parameter as well as a negative relationship between TFR and GDP per capita
+
+We can visualize these relationships in their **partial** forms using the `car` library:
+
+```{r}
+library(car)
+avPlots(fit,terms =~.)
+```
+
+
+###Interpretation of the regression terms
+- Just as in the simple regression analysis, we construct hypothesis tests that each of our $\beta$'s =
+0 using the t-test formed by dividing the $\beta$ / s.e.$(\beta)$.
+- We can create an ANOVA table showing the sources of variation, and calculate a F-test to test the null hypothesis that all of the $\beta$'s ==0. 
+- For the multiple regression model, we talk of the effects of each predictor as partial effects, meaning the effect of that particular variable, given all of the other predictors in the model, and the other predictors are held constant (usually at their means). 
+- This allows us to interpret the effect of each predictor, but we must avoid the temptation to say "This predictor is more important than this other predictor"
+- this is a problem if the covariates are not on the same **scale**
+
+###Standardized Coefficients
+- If we have predictors measured on different scales, say GDP and life expectancy we have variables measured in different manners, and often the range of the values could differ by several orders of magnitude
+- E.g. the range for
+- GDP per capita = $290 to 64,440
+- Life Expectancy = 33 to 82 years
+
+For predictor variables with large ranges (and large variances), we often see values of regression coefficients that are VERY small 
+- e.g. in the model above, the coefficient for GDP is `r coef(fit)[3]`, 
+which is very small. That's because this is the effect of a $1 change in GDP per capita on the TFR, which is very small. We could divide the GDP by some scaling value such as 1000, and we would get:
+
+```{r}
+fit<-lm(tfr~e0total+I(gnippppercapitausdollars/1000), data=prb)
+coef(fit)
+
+```
+
+and see that a $1000 increase in GDP leads to a reduction of the TFR by `r coef(fit)[3]`, which is still small, but the scale is a little easier to comprehend. 
+
+A more attractive method is to scale all variables in the analysis to a common scale prior to analysis. An easy way to do this is to *z-score* the variables prior to analysis. This is where we subtract the mean of each variable from each value and divide by the standard deviation. 
+
+$x_{zi} = \frac{x_i - \bar{x}}{s_x}$
+
+When we z-score the variables, they are now on the scale of the standard deviation. This means, that the interpretation is different. The $\beta$ now represents the change in x as a result of a 1 *standard deviation change in x*. For the GDP example above, this would be like saying the $\beta$ would reflect a 
+
+In R, the `scale()` function can do this internally in a model statement. Here goes:
+
+```{r}
+fitz<-lm(tfr~scale(e0total)+scale(gnippppercapitausdollars), data=prb)
+summary(fitz)
+
+```
+
+so the coefficient for $GDP_z$ is now `r coef(fitz)[3]` now says that a 1 standard deviation increase in the GDP leads to a decrease in the TFR of `r coef(fitz)[3]`. This is equivalent to a `r round(sd(prb$gnippppercapitausdollars, na.rm=T), 1)` change in GDP per capita.
+
+While a 1 unit change in life expectancy leads to a `r coef(fitz)[2]` change in TFR, which is much larger of an effect. This corresponds to a change in life expectancy of  `r sd(prb$e0total, na.rm=T)` years. 
+
+This alleviates the problem of differential scaling among variables, but caution must be used
+
+- A standard deviation increase in one variable is not the same as that for another variable 
+- What about binary variables?
+- In general try to make your interpretations in terms of the original units, not standard units, but these are useful for comparing *relative strengths of association* between predictors on different scales.
+
+###Check assumptions
+As with any model, we still need to check the assumptions:
+```{r}
+plot(fit)
+
+#normality check
+ks.test(rstudent(fit), y = pnorm)
+
+#heteroskedasticity check
+library(lmtest)
+bptest(fit)
+```
+
+
+So we have a heteroskedasticity problem. This means that the errors do not have constant variance. This is bad because we use the errors to make our tests for our $\beta$'s. In matrix terms, when we have OLS estimates of $\beta$, we can find the variance-covariance matrix of the $\beta$'s as:
+
+$s^2(\beta) = \text{MSE} (\mathbf{X'X})^{-1}$
+
+When $\text{MSE}$ is not constant, meaning that it changes with values of X, then the standard errors are incorrect. So, instead of assuming the $\text{MSE}$ is constant, we can use the empirical patterns in the residuals and construct *heteroskedasticity consistent standard errors*, or *robust* standard errors. The econometrician Halbert White, was one of a series of folks to derive estimates of the standard errors for the linear model that are consistent in the presence of unequal residual variances. These are commonly called *White's standard errors*. We can use some R functions to get these. In the `lmtest` library we will use the `coeftest()` function and in the `car` library, we will use the `hccm()` function to generate heteroskedasticity corrected covariance matrices for the $\beta$'s. 
+
+```{r}
+ coeftest(fit, vcov. = hccm(fit, type = "hc0"))
+```
+
+Compare this to the output from:
+```{r}
+summary(fit)
+```
+
+We see the t-statistics are much smaller for the `e0total` effect, and the intercept. This is what correcting for heteroskedasticity does for you. Before, the tests were wrong, and now they are better. This is important because these are the tests of your hypotheses, so they better be right. 
+
+###Use of qualitative predictors
+- We can easily incorporate categorical variables into the model
+- Say we have a variable indicating Hispanic ethnicity, so, if the person reports a Yes to the question "Do you consider yourself to be Hispanic?", they are coded as $x_{his}$=1, otherwise $x_{his}$=0
+
+- This is so - called dummy variable coding
+
+Say we want to study the effect of race on income, so our dependent variable is wages.
+- We have a factor variable for race with 4 levels
+- White, Black, Asian, Other
+- We are interested in how individuals of nonwhite races compare to whites in terms of incomes, so we say that our analysis will be in "reference" to whites.
+
+
+To code this, we need to construct 3 dummy variables
+- $x_{black}$ If the person reports their race as black, they are coded as $x_{black}$=1, otherwise $x_{black}$=0
+- $x_{asian}$ If the person reports their race as asian, they are coded as$x_{asian}$=1, otherwise $x_{asian}$=0
+- $x_{other}$ If the person reports their race as other, they are coded as $x_{other}$=1, otherwise $x_{other}$=0
+- We do not create a dummy variable for whites, because if the individual reports their race as white, they are accounted for because they have 0's for each of these 3 other variables.
+
+- This is called **reference group coding** using dummy variables, get used to doing this a lot.
+
+
+###Larger data example
+```{r}
+library(haven)
+
+ipums<-read_dta("https://github.com/coreysparks/data/blob/master/usa_00045.dta?raw=true")
+
+newpums<-ipums%>%
+  filter(labforce==2, age>=18, incwage>0)%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA,incwage),
+         sexrecode=ifelse(sex==1, "male", "female"))%>%
+  mutate(race_eth = case_when(.$hispan %in% c(1:4) & .$race %in%c(1:9) ~ "hispanic", 
+                          .$hispan ==0 & .$race==1 ~"0nh_white",
+                         .$hispan ==0 & .$race==2 ~"nh_black",
+                         .$hispan ==0 & .$race%in%c(3,7,8,9) ~"nh_other",
+                         .$hispan ==0 & .$race%in%c(4:6) ~"nh_asian",
+                          .$hispan==9 ~ "missing"))%>%
+  mutate(edurec = case_when(.$educd %in% c(0:61)~"nohs", 
+                            .$educd %in% c(62:64)~"hs",
+                            .$educd %in% c(65:100)~"somecoll",
+                            .$educd %in% c(101:116)~"collgrad", 
+                            .$educd ==999 ~ "missing"))
+
+#newpums$race_eth<-as.factor(newpums$race_eth)
+#newpums$race_eth<-relevel(newpums$race_eth, ref = "nh_white")
+
+
+ifit<-lm(log(mywage)~scale(age)+scale(I(age^2))+sexrecode+race_eth+edurec, data=newpums)
+summary(ifit)
+bptest(ifit)
+
+coeftest(ifit, vcov. = hccm(ifit, type = "hc0"))
+
+library(sjPlot)
+sjp.lm(ifit, sort.est = F, title = "Regression effects from IPUMS data- Wage as outcome", show.summary = T)
+```
+
+
+
+         

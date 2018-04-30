@@ -1,0 +1,206 @@
+---
+title: "DEM 7273 - Regression Analysis Part 1"
+author: "Corey S. Sparks, PhD"
+date: "October 18, 2017"
+output: 
+  html_document: 
+    toc: yes
+---
+
+
+
+###Dependent and Independent variables
+- We employ regression methods to study the functional relationships between our response variable and our explanatory variables
+- The response variable is our outcome that we are really interested in understanding, it is also called the dependent variable, because its value should depend on other characteristics we measure on our observational units.
+
+- The explanatory variable(s) are used to predict, or explain the variation in the outcome variable. These are referred to as the independent variables, because each predictor is assumed to be independent of each other, meaning they each reflect a unique component that explains the outcome
+
+####On models...
+- We speak of regression analysis in terms of constructing "models" for the dependent variable.
+- A model is a cartoon of reality, it will undoubtedly leave out important things, and oversimplify relationships
+- Regression analysis is a model where we try to explain our outcome variable in terms of a combination of explanatory variables. More often than not, we will over-generalize the real relationships involved.
+- We must remember the idea of *parsimony*, where the simpler solution is often the better one
+
+####What the regression model does..
+- The model estimates a mathematical function of the explanatory variables that most accurately predicts the response variable.
+- There are two primary uses of regression models 
+- This function can be used in future cases, where you may want to predict a value of an outcome that has not been observed
+- Very useful for demographic work
+- Prediction is notoriously difficult and problematic, especially if the outcome you're working on is something that could cause life or death
+- The model may be used to describe, or explain how a phenomena has worked in the past or currently works, in other words models work well to **describe associations**
+
+###Associations and Links
+- The explanatory and response variables should be linked together by some mechanism
+- This could be a theoretical association, a known causal pathway, or a physical or economic entity
+- This is often the most challenging part of regression analysis, because if you cannot describe how the predictors and outcome variable are linked, your analysis is meaningless
+
+####Simple regression model
+- The simplest regression model is one with one outcome variable and one predictor.
+- Suppose we have the Total Fertility Rate (TFR) for a country and the we want to examine the relationship between the TFR and life expectancy, we could write the simple regression:
+
+$TFR_i = \beta_0 +\beta_1 * \text{life expectancy}_i + \epsilon_i$ 
+
+- Where $\beta_0$ is the model intercept (mean of y when x=0), $\beta_1$ is the slope relating Life expectancy to the TFR and $\epsilon_i$ is the residual(unexplained) term of the model. The residual term is the unexplained random variation for each
+individual country, not accounted for by the independent variables. For data from 2008, we calculate the linear regression function as:
+
+
+
+```{r, message=F, warning=FALSE}
+library(broom)
+library(readr)
+library(dplyr)
+library(ggplot2)
+prb<-read_csv(file = "https://raw.githubusercontent.com/coreysparks/data/master/PRB2008_All.csv", col_types = read_rds(url("https://raw.githubusercontent.com/coreysparks/r_courses/master/prbspec.rds")))
+names(prb)<-tolower(names(prb))
+
+fit<-lm(tfr~e0total, data=prb)
+coef(fit)
+
+```
+
+The regression line is then: 
+
+$TFR_i =$ `r round(coef(fit)[1],3)` + `r round(coef(fit)[2],3)`* $\text{life expectancy}_i$ 
+
+- so, we observe a negative relationship between the TFR and life expectancy (as seen in the negative $\beta_1$ parameter.
+- If we were to overlay the value of this linear function over the data we would see:
+
+```{r}
+ggplot(prb, aes(x=e0total, y=tfr))+geom_point()+geom_smooth(method = "lm", se = FALSE)
+
+```
+
+```{r}
+p1<-ggplot(prb, aes(x=e0total, y=tfr))+geom_point()
+p2<-ggplot(prb, aes(e0total))+geom_histogram()
+p3<-ggplot(prb, aes(tfr))+geom_histogram()
+
+library(NetworkChange)
+pl<-list(p1, p2, p3)
+multiplot(plotlist=pl, cols=2)
+```
+
+This simple model assumes:
+
+- That life expectancy impacts the TFR in a linear manner, meaning that the relationship between life expectancy and the TFR is constant for all values of life expectancy.
+
+- So this model says that we can predict the TFR using the life expectancy and a random error term.
+
+- This error term is called the residual and represents the non-predictable portion of the variation in the TFR 
+
+- We expect that the model will work perfectly, so the expected value (mean) of the residuals is 0 
+
+- We assume the error terms have a constant variance, or $Var(\epsilon_i) = \sigma_{\epsilon}^2$
+
+- We also assume the $\epsilon_i$ are independent of one another and that the  $\epsilon_i$ are normally distributed.
+
+
+###Estimating the parameters of a model 
+- For the simple regression model, we have two parameters to estimate,$\beta_0$ and $\beta_1$. We also have another parameter to estimate, the residual variance $\sigma_{\epsilon}^2$. These are population parameters, and we must estimate sample-based
+estimates of these parameters. The goal of the regression analysis is to find the best unbiased estimate of these parameters and by best, we mean the parameters that minimize the residual sums of squares. We saw this from the ANOVA example:
+
+$RSS = \sum_i (y_i - \hat{y}_i )^2$
+
+Where $\hat{y}_i = E[y|x] = \hat{\beta_0} +\hat{\beta_1} * \text{life expectancy}_i$
+
+To estimate the regression parameters, the Gauss Markov theorem is used to solve the linear equation for $\beta_1$
+
+$\beta_1 = \frac {\sum (x_i - \bar{x})(y_i - \bar{y})}{\sum (x_i - \bar{x})^2}$
+
+The top part of the equation is the cross-products, or covariance between the outcome and the predictor, and the bottom is the sum-of-squares, or un-scaled variance in the predictors. The other parameter can be found once  $\beta_1$ is estimated as:
+
+$\beta_0 = \bar{y} - \beta_1 \bar{x}$
+
+These are the *ordinary least - squares estimates* of the regression parameters, and are a direct solution for the regression model when the conditions of normality, homoskedasticity and independence are met. 
+
+
+###Inference for regression parameters
+- In the output from an analysis, the computer will provide an estimate of the standard error for each $\beta$ parameter.
+- The standard error is the amount of variation in the estimate (high standard errors mean there is a high degree of uncertainty in the estimate, and vice versa).  We can calculate a t-test that the parameter is 0 by using the estimate of the parameter and the standard error of the parameter, which is calculated as:
+
+Mean square error
+
+$$\sigma_{\epsilon}^2 =\text{MSE} = \frac{(y_i - \bar{y})^2}{n-p}$$
+
+$$s.e.(\hat{\beta_1}) = \frac{\text{MSE}}{\sum (x_i - \bar{x})^2}$$
+
+The test statistic is a t-statistic, generally, and 
+
+$$t = \frac{\hat{\beta_1}}{s.e.(\hat{\beta})}$$
+
+and we can find a 95% confidence interval for $\beta_1$ by using it's assumed normal sampling distribution, as:
+
+$$\hat{\beta_1} \pm 1.96*s.e.(\hat{\beta})$$
+
+or by assuming a t-distribution as:
+
+$$\hat{\beta_1} \pm t(1-\alpha/2; df=n-p)*s.e.(\hat{\beta})$$
+
+Revisiting our model from above, we can get these things by using `summary()` of the model fit.
+
+```{r}
+summary(fit)
+
+```
+We see the estimates of the parameters, their associated standard errors, and the t-statistics for each, along with the calculated p-value of the test.
+
+To get confidence intervals, for any model, we can use the `confint()` function
+
+```{r}
+confint(fit)
+
+```
+
+```{r, echo=F}
+sums<-summary(fit)
+```
+Likewise, since we've seen the linear model before in the ANOVA and two group setting, we also get a model $R^2$ from the summary, and we see that `r 100*sums$sums$r.squared` percent of the variation in the TFR is explained by the life expectancy.
+
+So, what would we conclude about our analysis in this case?
+
+- In general, I examine the t statistics for the $\beta_1$ parameter first, if it is not different from 0 then there is no association
+
+- Secondly, I examine the model $R^2$ to see how the model is doing in terms of explaining variation in the dependent variable. If it is low (<.1), well that's too bad, we have to work with what we have. Perhaps we should consider adding more predictor variables. If it's high (>.4) well that's good too, and maybe I won't add more predictor variables. Then I proceed to check the other model assumptions
+
+
+###Evaluating the model assumptions
+- The first step in checking the constant error variance assumption would be to calculate the model residuals. These are calculated when R fits the model and can be found in `fit$residuals`. We can also calculate standardized residuals using the `rstandard()` function
+
+Typically we would use graphical methods to identify if there is non-constant variance:
+
+```{r}
+plot(fit, which=1)
+
+```
+
+In this plot, we are looking for patterns. One patter we would like to see would be that the residuals are constantly varying with respect to the fitted values, in this case, they are not. Lower fitted values have lower variance than higher fitted values. The line provided can also examine the residuals for non-constant trend in residuals, and in this case, the red line begins to indicate a positive trend in the residuals for higher values of the fitted values, suggesting non-constant variation.
+
+We can also apply the *Breush-Pagan test* here, (from the help) "The Breusch-Pagan test fits a linear regression model to the residuals of a linear regression model". So, this is a test for trend, where the above method was purely graphical.
+
+```{r}
+library(lmtest)
+bptest(fit)
+
+```
+
+Which supports our assertion that the variance was not constant.
+
+###Normality of residuals
+
+We next examine our model for normality of residuals. First a graphical method:
+```{r}
+plot(fit, which=2)
+
+```
+
+Not bad, but is it good enough? We can use the devilish Shapiro Wilk test or the Kolmogorov- Smirnov test.
+
+```{r}
+shapiro.test(resid(fit))
+ks.test(resid(fit), y = pnorm)
+```
+
+So, S-W says the residuals are not normal, but K-S says the cumulative distribution of the residuals does not differ from a normal. So, we'll go with the Russians this time.
+
+
+
