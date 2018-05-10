@@ -1,0 +1,347 @@
+---
+title: "DEM 7273 - Example 3 - Descriptive Graphics using ggplot2"
+author: "Corey Sparks, PhD"
+date: "September 6, 2017"
+output:
+  html_document:
+    keep_md: no
+  html_notebook:
+    toc: yes
+---
+
+This example will go through some commonly used graphical methods for describing data. We will focus on learning how to use the various geometry types used in `ggplot()`. I urge you to consult the first chapter of the Wickham and Grolemund text, and Wickham's ggplot2 text in the Use R! series. 
+
+We then examine the 2008 PRB Data sheet and the 2015 American Community Survey microdata. 
+
+###Basic ggplot()
+The first thing we need to use ggplot is to install the library, which you have already done. The second thing we need is some data. I'm going to use the PRB data for now because it's much prettier than the ACS data for plotting.
+
+```{r loadprb}
+library(ggplot2)
+library(readr)
+prb<-read_csv(file = "https://raw.githubusercontent.com/coreysparks/data/master/PRB2008_All.csv")
+```
+
+To create a ggplot, we basically tell the function what data we want to use, then tell it the kind of geometry we want to use to summarize the data.
+
+#Histograms
+Histograms are a special case of a bar chart. They represent the distribution of data, and should ALWAYS be one of the first things you look at when beginning the examination of a data set/variable.
+
+- Two main forms are used
+  + Frequency histogram - the bars are the raw count
+  + Relative frequency histogram - the bars are the percentage of the data that fall into that value
+
+
+To construct the frequency histogram, we count the number of observations that fall into each
+class interval. The `table()` function is really good at counting stuff.
+- To construct the relative frequency histogram, we take the frequency histogram and divide the counts in each interval by the total number of observations. This gives the percentage of the data that fall into the interval.
+
+###Patterns in histograms
+*Modality*
+- Typically a variable will have a single mode (unimodal), meaning that there is 1 major peak in 
+the data. 
+- We can also have multi-modal data, where multiple peaks occur in a variable. This is often indicative of some unmeasured group structure in the data. The most common form of this is bi-modality, where we
+have two peaks in the histogram. Likewise the data may lack a single mode, and be more uniformly distributed, and the histogram will be flat.
+
+
+*Distributional shape*
+- The data may be symmetric, where equal proportions occur on both the right and left of the peak
+- Similarly, the data may be skewed, or have a long tail
+- Skewed data are common in demographic work (income)
+- Right skewed data will have a long tail to the right (extreme values to the high end of the histogram)
+- Left skewed data will have a long tail to the left (extreme values to the low end of the histogram)
+- Skewness will have major implications for the kinds of statistical tests we can consider later. Typically most tests assume the data are symmetrically distributed
+
+```{r histograms}
+#fake data
+xnorm<-rnorm(100, 25, 5)
+xflat<-runif(100,min=20, max=40)
+```
+
+The `hist()` function in R will give basic histograms, but is pretty limited.
+```{r}
+hist(xnorm, main="My plot title", xlab = "x axis label", ylab="y axis label")
+hist(xflat)
+```
+
+Pretty basic.
+
+ggplot allows us a lot more bells and whistles
+
+#Whoops!
+`ggplot` can't handle a vector, so we need to make a dataframe.
+```{r}
+xnorm<-data.frame(xnorm=xnorm)
+ggplot(data=xnorm)+geom_histogram(aes(xnorm), binwidth = 2.5)
+```
+Again, pretty basic. Let's add some text.
+```{r}
+ggplot(data=xnorm)+
+  geom_histogram(mapping= aes(x=xnorm), binwidth = 2.5 )+
+  ggtitle(label = "my histogram", subtitle = "my sub title")+
+  xlab(label = "my x label")+
+  ylab(label="my y label")
+```
+
+You can also get this using `qplot`
+```{r}
+qplot(x =xnorm$xnorm,
+      geom = "histogram",
+      binwidth=2.5,
+      main = "big title",
+      xlab = "x label",
+      ylab="y label")
+
+```
+
+Pretty much the same thing, but fewer details are possible. 
+
+There's also a `geom_freqpoly` geometry that draws lines instead of bars. It's pretty neat, here it is doing the basic function of a histogram, and again doing histograms by continent.
+
+```{r prbhist}
+
+ggplot(data=prb)+
+  geom_freqpoly(mapping = aes(TFR), bins=10)+
+  ggtitle(label = "Distribution of the Total Fertility Rate ", subtitle = "2008 Estimates")+
+  xlab(label = "TFR")+
+  ylab(label="Frequency")
+
+ggplot(data=prb)+
+  geom_freqpoly(mapping = aes(TFR, colour=Continent), bins=10, lwd=2)+
+  ggtitle(label = "Distribution of the Total Fertility Rate by Continent", subtitle = "2008 Estimates")+
+  xlab(label = "TFR")+
+  ylab(label="Frequency")
+
+```
+
+Also, we can plot the density, instead of the count by including the `..density..` argument in the aesthetic `aes()`.
+```{r}
+ggplot(data=prb)+
+  geom_histogram(mapping = aes(TFR, colour=Continent), bins=10)+
+  ggtitle(label = "Distribution of the Total Fertility Rate by Continent", subtitle = "2008 Estimates")+
+  xlab(label = "TFR")+
+  ylab(label="Frequency")
+
+
+
+```
+
+So, you can see that we can quickly add detail to our plots, you can't do this with `hist()`.
+
+
+#Stem and leaf plots/Box and Whisker plots
+Another visualization method is the stem and leaf plot, or box and whisker plot. This basically displays Tukey's 5 number summary of data. 
+
+```{r}
+ggplot(prb)+
+  geom_boxplot(aes(x= Continent, y =TFR))+
+  ggtitle(label = "Distribution of the Total Fertility Rate by Continent", subtitle = "2008 Estimates")
+```
+You can flip the axes, by adding `coord_flip()`
+
+```{r}
+ggplot(prb)+
+  geom_boxplot(aes(x= Continent, y =TFR))+
+  ggtitle(label = "Distribution of the Total Fertility Rate by Continent", subtitle = "2008 Estimates")+coord_flip()
+
+```
+You can also color the boxes by a variable:
+```{r, fig.height=8, fig.width=10}
+prb$newname<-paste(prb$Continent, prb$Region, sep="-")
+ggplot(prb)+
+  geom_boxplot(aes(x= newname, y =TFR,fill=Continent))+coord_flip()+
+  ggtitle(label = "Distribution of the Total Fertility Rate by Continent", subtitle = "2008 Estimates")
+
+
+```
+
+
+#X-Y Scatter plots
+These are useful for finding relationships among two or more variables, typically continuous. `ggplot()` can really make these pretty.
+```{r}
+plot(TFR~IMR, data=prb)
+
+```
+Here are a few riffs using the PRB data:
+```{r}
+ggplot(data=prb)+
+  geom_point(mapping= aes(x=TFR, y=IMR))+
+  ggtitle(label = "Relationship between Total Fertility and Infant Mortality", subtitle = "2008 Estimates")+
+  xlab(label = "TFR")+
+  ylab(label="IMR")
+
+#color varies by continent
+ggplot(data=prb)+
+  geom_point(mapping= aes(x=TFR, y=IMR, color=Continent))+
+  ggtitle(label = "Relationship between Total Fertility and Infant Mortality", subtitle = "2008 Estimates")+
+  xlab(label = "TFR")+
+  ylab(label="IMR")
+
+#shape varies by continent
+ggplot(data=prb)+
+  geom_point(mapping= aes(x=TFR, y=IMR, shape=Continent))+
+  ggtitle(label = "Relationship between Total Fertility and Infant Mortality", subtitle = "2008 Estimates")+
+  xlab(label = "TFR")+
+  ylab(label="IMR")
+
+```
+
+##Facet plots
+Facet plots are nice, if you want to create a plot separately for a series of groups. This allows you to visualize if the relationship is constant across those groups, well at least graphically. 
+
+```{r}
+ggplot(data=prb)+
+  geom_point(mapping= aes(x=TFR, y=IMR))+
+  facet_wrap(~Continent)+
+  ggtitle(label = "Relationship between Total Fertility and Infant Mortality", subtitle = "2008 Estimates")+
+  xlab(label = "TFR")+
+  ylab(label="IMR")
+
+```
+
+If you have lots of variables you want to plot, you can make a *scatter plot matrix*. `ggplot()` won't do this out of the box, but the `GGally` library can do it, you need to install it first before using it.
+
+```{r, message=FALSE, fig.width=8, fig.height=7}
+GGally::ggpairs(data= prb[complete.cases(prb[,c(16, 18, 19)]),], 
+                columns = c(16, 18, 19),
+                ggplot2::aes(color=Continent))
+
+```
+
+
+##Plotting relationships with some line fits
+`ggplot` allows you to make some very nice line-fit plots for scatter plots. While the math behind these lines is not what we are talking about, they do produce a nice graphical summary of the relationships.
+
+```{r}
+ggplot(data=prb)+
+  geom_point(mapping= aes(x=TFR, y=IMR))+
+  geom_smooth(mapping= aes(x=TFR, y=IMR), method = "lm")+
+  ggtitle(label = "Relationship between Total Fertility and Infant Mortality", subtitle = "2008 Estimates-linear fit")+
+  xlab(label = "TFR")+
+  ylab(label="IMR")
+
+ggplot(data=prb)+
+  geom_point(mapping= aes(x=TFR, y=IMR))+
+  geom_smooth(mapping= aes(x=TFR, y=IMR) , method = "loess")+
+  ggtitle(label = "Relationship between Total Fertility and Infant Mortality", subtitle = "2008 Estimates")+
+  xlab(label = "TFR")+
+  ylab(label="IMR")
+
+#another example, bad linear plot!
+ggplot(data=prb)+
+  geom_point(mapping= aes(x=TFR, y=PercPopLT15))+
+  geom_smooth(mapping= aes(x=TFR, y=PercPopLT15) , method = "lm")+
+  ggtitle(label = "Relationship between Total Fertility and Percent under age 15", subtitle = "2008 Estimates-linear fit")+
+  xlab(label = "Percent under age 15")+
+  ylab(label="IMR")
+
+
+ggplot(data=prb)+
+  geom_point(mapping= aes(x=TFR, y=PercPopLT15))+
+  geom_smooth(mapping= aes(x=TFR, y=PercPopLT15) , method = "loess")+
+  ggtitle(label = "Relationship between Total Fertility and Percent under age 15", subtitle = "2008 Estimates- loess fit")+
+  xlab(label = "Percent under age 15")+
+  ylab(label="IMR")
+
+
+
+```
+
+
+##Really Real data example
+Now let's open a 'really real' data file. 
+
+```{r load data}
+library(haven)
+ipums<-read_dta("https://github.com/coreysparks/data/blob/master/usa_00045.dta?raw=true")
+names(ipums) #print the column names
+
+```
+
+We are basically going to recreate the plots from above but using these data instead. 
+
+
+Here is a basic histogram of our income variable, by sex.
+
+```{r ipums, echo=TRUE}
+library(dplyr)
+
+ipums%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA, incwage))%>%
+  filter(labforce==2, age>18) %>%
+  mutate(sexrecode=ifelse(sex==1, "male", "female")) %>%
+  ggplot()+
+  geom_histogram(aes(mywage))
+  
+
+ipums%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA, incwage))%>%
+  filter(labforce==2,  age>18) %>%
+  mutate(sexrecode=ifelse(sex==1, "male", "female")) %>%
+  ggplot()+
+  geom_histogram(aes(mywage))+
+  facet_wrap(~sexrecode)
+
+
+```
+
+Next, we will do the income distribution using box plots across the metro areas in Texas. I looked on the ipums website to get the city codes.
+
+```{r, fig.width=8, fig.height=9}
+png(filename = "C:/Users/ozd504/Documents/incomecityplot.png", width = 800, height =600)
+ipums%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA, incwage))%>%
+  filter(labforce==2,  age>18, met2013%in%c(11100, 12420, 15180, 17780, 18580, 21340, 26420,  29700,32580, 47380,41700, 19100) ) %>%
+  mutate(sexrecode=ifelse(sex==1, "male", "female"),
+         cityrec = case_when(.$met2013==11100~"Amarillo", 
+                            .$met2013 == 12420~"Austin",
+                            .$met2013==15180 ~"Brownsville", 
+                            .$met2013== 17780 ~ "College Station",
+                            .$met2013== 18580 ~ "Corpus Christi",
+                            .$met2013== 21340 ~ "El Paso",
+                            .$met2013== 26420 ~ "Houston",
+                            .$met2013== 29700~ "Laredo",
+                            .$met2013== 32580~ "McAllen",
+                            .$met2013== 47380~ "Waco", 
+                            .$met2013== 41700 ~ "San Antonio",
+                            .$met2013== 19100 ~ "Dallas")) %>%
+  ggplot()+
+  geom_boxplot(aes(x=cityrec, y=mywage))
+  
+dev.off()
+
+```
+
+Or a scatter plot of income by age
+```{r}
+ipums%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA, incwage))%>%
+  filter(labforce==2,  age>18, met2013!=0) %>%
+  mutate(sexrecode=ifelse(sex==1, "male", "female")) %>%
+  ggplot()+
+  geom_point(aes(x=age, y=mywage, color=sexrecode),size=.15)+
+  geom_smooth(aes(x=age, y=mywage, colour=sexrecode))+
+  ylim(c(0,2.5e+05))+
+  ylab("Income")+
+  xlab("Age")+
+  ggtitle(label = "Distribution of Income by age for men and women", subtitle = "2015 American Community Survey")
+
+```
+
+
+Or we could create a line plot of the average income by age and sex:
+```{r}
+ipums%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA, incwage))%>%
+  filter(labforce==2,  age>18, met2013!=0) %>%
+  mutate(sexrecode=ifelse(sex==1, "male", "female")) %>%
+  group_by(sexrecode, age)%>%
+  summarise(medincome=median(mywage, na.rm=T))%>%
+  ggplot()+
+  geom_point(aes(x=age, y=medincome, color=sexrecode),size=.1)+
+  geom_smooth(aes(x=age, y=medincome, colour=sexrecode))+
+  ylab("Age")+
+  xlab("Income")+
+  ggtitle(label = "Median Income by age for men and women", subtitle = "2015 American Community Survey")
+
+```

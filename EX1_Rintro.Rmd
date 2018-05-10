@@ -1,130 +1,231 @@
 ---
-title: "DEM 7283 - Example 1 - Introduction to R"
-author: "coreysparks"
-date: "January 12, 2014"
-output: html_document
+title: "DEM 7273 - Example 1 - Introduction to R"
+author: "Corey Sparks, PhD"
+date: "August 23, 2017"
+output:
+  html_document:
+    keep_md: no
+  html_notebook:
+    toc: yes
 ---
 
-Welcome to R. R is very different from SAS. R is an interpreted language, not a compiled one. This means, you type something into R and it does it. There is no data step. There are no procs. The SAS and R book is very useful for going between the two programs.  R uses libraries to do different types of analysis, so we will need to install lots of different libraries to do different things. These need to be downloaded from the internet, using the `install.packages()` command. You only need to install a package once. E.g.
+#Welcome to R.
+R is an interpreted languages, not a compiled one. This means, you type something into R and it does it. There is no data step. There are no procs. The SAS and R book is very useful for going between the two programs.  
 
-`install.packages("lme4")`
+R uses libraries to do different types of analysis, so we will need to install lots of different libraries to do different things. These need to be downloaded from the internet, using the `install.packages()` command. You only need to install a package once. E.g.
+
+`install.packages("car")`
 will install the lme4 library. To use the functions within it, type
 
-`library(lme4)`
+`library(car)`
 
-Now you have access to those fuctions. 
+Now you have access to those functions. 
 
-Below we will go through a simple R session where we basically review much of what we did last semester. We will load a dataset, print some cases, do some descriptice statistics and plots, t tests, and some linear models and diagnostics of those models.
+I strongly recommend you install several packages prior to us beginning. I've written a short script on Github you can use it by running:
+
+```{r, eval=FALSE}
+source("https://raw.githubusercontent.com/coreysparks/Rcode/master/install_first_7223.R")
+```
+
+Below we will go through a simple R session where we introduce some concepts that are important for R.
+
+
+###R is a calculator
+```{r}
+#addition and subtraction
+3+7
+3-7
+
+#multiplication and division
+3*7
+
+3/7
+
+#powers
+3^2
+3^3
+
+#functions
+log(3/7)
+exp(3/7)
+sin(3/7)
+
+```
+
+
+###Variables and objects
+
+In R we assign values to objects (object-oriented programming). These can generally have any name, but some names are reserved for R. For instance you probably wouldn't want to call something 'mean' because there's a 'mean()' function already in R. For instance:
 
 ```{r}
-#Load some libraries that I need
-library(lmtest)
-library (car)
-library(Hmisc)
-library(sandwich)
-library(multcomp)
-library(knitr)
+x<-3
+y<-7
+x+y
+x*y
+log(x*y)
 
-#Read in a Commma separated values file, In this case, I am using the Population Reference Bureau's Population Data sheet from 2008.
-dat<-read.csv("~/Google Drive/dem7283/PRB2008_All.csv")
+```
+
+##vectors
+R thinks everything is a matrix, or a vector, meaning a row or column of numbers, or characters. One of R's big selling points is that much of it is completely vectorized. Meaning, I can apply an operation along all elements of a vector without having to write a loop. For example, if I want to multiply a vector of numbers by a constant, in SAS, I could do:
+#for (i in 1 to 5)
+#  x[i]<-y[i]*5
+#end
+
+but in R, I can just do:
+```{r}
+x<-c(3, 4, 5, 6, 7)
+#c() makes a vector
+y<-7
+
+x*y
+
+```
 
 
-#print all of the variable names in the data set
-names(dat)
+R is also very good about using vectors, let's say I wanted to find the third element of x:
+```{r}
+x[3]
+
+#or if I want to test if this element is 10
+x[3]==10
+x[3]!=10
+
+#of is it larger than another number:
+x[3]>3
+
+#or is any element of the whole vector greater than 3
+x>3
+
+```
 
 
-#look at the first 5 cases
-head(dat, n=5)
+If you want to see what's in an object, use `str()`, for `str`ucture
 
+```{r}
+str(x)
+```
+
+and we see that x is numeric, and has those values.
+
+We can also see different characteristics of x
+```{r}
+#how long is x?
+length(x)
+
+#is x numeric?
+is.numeric(x)
+is.character(x)
+#is any element of x missing?
+is.na(x)
+xc<-c("1","2")
+
+#now i'll modify x
+x<-c(x, NA) #combine x and a missing value ==NA
+x
+is.na(x)
+```
+
+##replacing elements of vectors
+Above, we had a missing value in X, let's say we want to replace it with another value:
+```{r}
+x<-ifelse(test = is.na(x)==T, yes =  sqrt(7.2), no =  x)
+x
+```
+
+Done!
+
+##Dataframes
+Traditionally, R organizes variables into data frames, these are like a spreadsheet. The columns can have names, and the dataframe itself can have data of different types. Here we make a short data frame with three columns, two numeric and one character:
+
+```{r}
+mydat<-data.frame(
+  x=c(1,2,3,4,5),
+  y=c(10, 20, 35, 57, 37),
+  group=c("A", "A" ,"A", "B", "B")
+)
+
+#See the size of the dataframe
+dim(mydat)
+length(mydat$x)
+#Open the dataframe in a viewer and just print it
+View(mydat)
+print(mydat)
+```
+
+
+##Real data
+Now let's open a 'real' data file. This is the [2008 World population data sheet](http://www.prb.org/Publications/Datasheets/2008/2008wpds.aspx) from the [Population Reference Bureau](http://www.prb.org). It contains summary information on many demographic and population level characteristics of nations around the world in 2008.
+
+I've had this entered into a **Comma Separated Values** file by some poor previous GRA of mine and it lives happily on Github now for all the world to see. CSV files are a good way to store data coming out of a spreadsheet. R can read Excel files, but it digests text files easier. Save something from Excel as CSV. 
+
+I can read it from github directly by using a function in the `readr` library:
+
+```{r, echo=F, results='hide', message=F, tidy=TRUE}
+library(readr)
+prb<-read_csv(file = "https://raw.githubusercontent.com/coreysparks/data/master/PRB2008_All.csv")
+#names(prb) #print the column names
+#View(prb) #open it in a viewer
+```
+
+That's handy. If the file lived on our computer, I could read it in like so:
+*note, please make a folder on your computer so you can store things for this class in a single location!!!! Organization is Key to Success in Graduate School*
+
+```{r}
+
+#prb<-read_csv("C:/Users/ozd504/Google Drive/classes/dem7273/class_17/data/PRB2008_All.csv")
+
+```
+
+Same result.
+
+The `haven` library can read files from other statistical packages easily, so if you have data in Stata, SAS or SPSS (barf!), you can read it into R using those functions, for example, the `read_dta()` function reads stata files. 
+
+Don't know what a function's called use ??
+
+`??stata`
+`??csv`
+
+and Rstudio will show you a list of functions that have these strings in them. 
+
+What if you know the function name, like `read_csv()` but you want to see all the function arguments?
+
+`?read_csv`
+
+will open up the help file for that specific function
+
+
+###Save a file
+Want to save something as a R data file? Use `save()`
+
+```{r}
+#save(prb, file="C:/Users/ozd504/Google Drive/classes/dem7273/class_17/data/prb_2008.Rdata")
+```
+
+If you have an R data file, use `load()` to open it:
+
+```{r}
+#load("C:/Users/ozd504/Google Drive/classes/dem7273/class_17/data/prb_2008.Rdata")
+```
+
+
+
+Let's have a look at some descriptive information about the data:
+```{r}
 #Frequency Table of # of Contries by Continent
-table(dat$Continent)
+table(prb$Continent)
 
 
-#basic summary statistics
-summary(dat)
+#basic summary statistics for the variable TFR or the total fertility rate
+summary(prb$TFR)
 
-#just want a mean
-mean(dat$IMR, na.rm=T)
-#standard deviation
-sd(dat$IMR, na.rm=T)
-#Quantiles
-quantile(dat$IMR, na.rm=T)
-
-#histogram of the infant mortality rate
-hist(dat$IMR, main="Histogram of Infant Mortality Rate")
-
-#Box plot for IMR* Continent
-boxplot(IMR~Continent, dat,main="Boxplot of Infant Mortality Rate by continent")
-
-#scatter plot of IMR * TFR
-plot(IMR~TFR, data=dat, main="Bivariate Association between TFR and IMR")
-
-#t-test for Africa vs Rest of the world
-#Useing the I() funciton, which generates a T/F value, i.e. 2 groups, Africa or Not Africa
-t.test(IMR~I(Continent=="Africa"), dat)
-
-
-#Simple ANOVA model version of a t-test
-fit<-lm(IMR~I(Continent=="Africa"), dat)
-summary(fit)
-
-#ANOVA model for IMR by continent
-fit<-lm(IMR~Continent, dat)
-anova(fit)
-#Post hoc tests using Tukey comparisons
-glht(fit, linfct=mcp(Continent="Tukey"))
-
-#Basic OLS models
-#fit the basic regression model
-fit1<-lm(IMR ~ TFR + log(GNIPPPperCapitaUSDollars)+ log(PopDensPerSqMile), data=dat)
-summary(fit1)
-#do some diagnostic plots
-plot(fit1)
-
-#Normality of residuals from the first fit?
-shapiro.test(rstudent(fit1))
-plot(density(rstudent(fit1)))
-#test for heteroskedasticity
-bptest(fit1)
-#variance inflation factors
-vif(fit1)
-
-#make White-corrected t-statistics and p values
-coeftest(fit1, vcov=vcovHC(fit1, type = "HC0"))
-
-#now we fit a model that includes differences between continents
-fit2<-lm(IMR ~ TFR + log(GNIPPPperCapitaUSDollars)+ log(PopDensPerSqMile)+ Continent, data=dat)
-summary(fit2)
-
-#We can compare how model 2 performs compared to model 1 by using an F test
-anova (fit1, fit2, test="F")
-
-
-#Now we fit a model with an interaction term between continent and GDP, in R this is easy, all we have to do is use the * operation
-fit3<-lm(IMR ~ TFR + log(GNIPPPperCapitaUSDollars)+ log(PopDensPerSqMile), data=dat)
-summary(fit3)
-
-#We can compare out model 2 with the interaction model to see if there is a significant difference in how GDP operates across continents
-anova (fit2, fit3, test="F")
-#This test suggests that there is not a significant interaction between GDP and Continent
+prb$Country[is.na(prb$e0Total)]
+subset(prb, is.na(prb$e0Total))
 ```
 
-```{r kable, results='asis'}
-#examine a log transformed outcome, this can be easily done within the lm() function
-lm2<-lm(log(IMR) ~ TFR + log(GNIPPPperCapitaUSDollars)+ log(PopDensPerSqMile), data=dat)
-summary(lm2)
+There is one country missing the Total fertility rate variable. The minimum is 1 and the maximum is 7.1 children per woman.
 
-#Normality of errors
-shapiro.test(rstudent(lm2))
-#Heterosckedasticity test
-bptest(lm2)
-library(stargazer)
-#diagnostic plots
-#plot(lm2)
-#kable(summary(lm2)$coef, digits = 2, format = "html", caption="Results from model 2", row.names=)
 
-stargazer(fit3, lm2, title="Model 2 results",type="html", align=T, covariate.labels = c("TFR", "lnGDP", "lnDens"))
-
-```
+More next week!!
 
 

@@ -1,0 +1,207 @@
+---
+title: "DEM 7273 Example 7 - Association among variables"
+author: "Corey S. Sparks, PhD"
+date: "October 4, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In this example, we will review measures of association among categorical and continuous variables. This will include tests of independence for categorical variables and measures of correlation for continuous variables.
+
+So far we have basically treated variables in a univariate framework, each variable considered with respect to only itself. In the ANOVA model we saw our first bivariate association, where we asked whether our dependent variable differed based upon what "group" you belonged to. We were simply looking for an association between a continuous variable and a categorical variable (group). 
+
+##Association among categorical variables
+A very common method of summarizing data in demography is through the use of contingency tables. These represent a cross-tabulation of counts of events. These are typically used to summarize nominal, or categorical data that are represented by a series of distinct categories. 
+
+An example of a cross tabulation for 2, two-level (binary) variables is:
+```{r}
+library(haven)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+ipums<-read_dta("https://github.com/coreysparks/data/blob/master/usa_00045.dta?raw=true")
+
+tab1<-ipums%>%
+  filter( age>=18, sex==2 )%>%
+  mutate(lfpart=ifelse(labforce==1, 0, ifelse(labforce==2, 1, NA)),
+         birth=ifelse(fertyr==2, 1, 0))%>%
+  xtabs(~lfpart+birth, data=.)
+
+tab1
+
+#If you want to keep with the strict tidyverse:
+tab1t<-
+  ipums%>%
+  filter( age>=18, sex==2 )%>%
+  mutate(lfpart=ifelse(labforce==1, 0, ifelse(labforce==2, 1, NA)),
+         birth=ifelse(fertyr==2, 1, 0))%>%
+  group_by(lfpart, birth) %>% summarise(n = n())%>%
+  spread(key = birth, value = n)
+tab1t
+```
+
+Which gives us the counts of all combinations of the two variables. We can calculate these as percentages, which are often easier to digest
+
+```{r}
+prop.table(tab1)
+
+```
+
+but that isn't terribly informative, because the percentages are the proportion of the total sample size, it's often better to do row or column percentages. In this case, the row percentage would give us the percent of women who had a child, by labor force participation status. 
+
+```{r}
+prop.table(tab1, margin = 1)
+
+```
+
+So, we see that 2.38% of women who were not in the labor force had a child in the past  year, and 2.92% of women in the labor force had a child in the past year. These seem pretty similar.
+
+The 2 by 2, or more general r by c (rows by columns) table is a tool that you will use ALL THE TIME! This is the basic tool for testing dependence between categorical variables. 
+
+
+To test for association, we use the *Pearson $\chi^2$ test* (chi - square). The chi square test, tests for the difference between observed and expected counts in a r by c table. It is calculated as:
+
+$\chi^2 = \sum \frac{(\text{O}_{ij} - \text{E}_{ij})^2}{\text{E}_{ij}}$
+
+Where the $\text{E}_{ij}$'s are calculated as $\text{E}_{ij}= n * \pi_{ij}$, where the $\pi_{ij} = \sum n_{i.}/n *\sum n_{.j}/n$, or if the rows and columns of the table are independent, then the expected values of any cell in the table should be the product of the *marginal probabilities* for the rows and columns, multiplied by the total sample size. This is called the $\chi^2$ *test for independence*. 
+
+If we use `xtabs()` to get our table, then we can use `summary()` to get the chi square test, or we can use `chisq.test()` on the output from `table()`:
+
+```{r, results='asis'}
+summary(tab1)
+
+newpums<-ipums%>%
+  filter( age>=18, sex==2 )%>%
+  mutate(lfpart=ifelse(labforce==1, 0, ifelse(labforce==2, 1, NA)),
+         birth=ifelse(fertyr==2, 1, 0),
+         mywage= ifelse(incwage%in%c(999998,999999), NA,incwage))
+
+tab1_t<-table(newpums$labforce, newpums$birth)
+tab1_t
+chisq.test(tab1_t)
+```
+Which has a small numerical discrepancy, but the same take home.
+
+
+This may be slightly getting ahead ourselves, but for any general contingency table, we can analyze the Independence of rows and columns by doing a *log-linear model*, which is a particular case of a Poisson generalized linear model:
+
+```{r}
+
+tab1_df<-as.data.frame(xtabs(~lfpart+birth, newpums))
+tab1_df
+
+
+fit<-glm(Freq~lfpart+birth,  data=tab1_df, family = poisson)
+anova(fit, test = "Chisq")
+
+#OR:
+loglin(tab1_t, margin = c(1,2))
+```
+
+The chi-squared test for independence assumes that we have at least 5 observations in each cell, or that no fewer that 20% of the cells has fewer that 5 observations. If this occurs, you must consider whether you need to collapse one or more rows/columns to get enough cases in each cell. This test tells you nothing about the strength of association between the rows and columns, only that they are *not independent*.
+
+####Measures of crosstab association
+-Phi coefficient
+  - Phi is used to measure correlation for a 2 by 2 table only.
+It is interpreted as a normal correlation, and is bound on (-1, 1)
+
+```{r}
+library(psych)
+phi(tab1)
+```
+
+-Kendall's tau
+-This measures how concordant the data are, and is often  good for ordinal data
+-Concordant meaning that if the x value has a high rank, the y value also has an equally high rank
+-Interpret as a normal correlation, bound on (-1,1)
+
+**danger, don't run this on the whole data set, it chokes R!! You've been warned!!**
+```{r}
+corr.test(newpums[sample(1:dim(newpums)[1], size = 1000, replace = F), c("birth", "lfpart")], method = "kendall")
+```
+
+
+##Linear association among continuous variables
+###Covariance
+-Underlying the commonly used measures of association between normally distributed variables is the statistical quantity of *covariance*. Covariance measures the unscaled linear association between two variables. If we have 2 continuous variables, x and y, then their covariance is:
+
+$$Cov(x, y) = s_{xy} = \sum_x \sum_y (x_i - \bar{x}) (y_i - \bar{y})$$
+
+if observations of x and y co-vary with one another, meaning they are associated, then if one is above its mean, the other will also tend to be above its mean and vice versa. If $x_i$ and $y_i$ are both above their means, or both below their means, the product of their deviations from the mean will tend to be positive, and we will have positive covariance (positive association). If one of the variables, say x, on average has values above the mean, and y has values below the mean, the covariance will be negative (negative association). We can say that, if two variables are so-called bivariate normally distributed, then if the covariance between them is 0, then they are
+independent, but if there is a non-zero covariance between them the are dependent to some degree on one another. If two variables have a 0 covariance, then they are linearly independent, which does not make them totally independent. For instance, they could display a nonlinear association, that suggests strong dependence, but a covariance would never be able to accurately measure that association.
+
+Keep in mind that covariance is said to be scale dependent, meaning that, unless both x and y are measured on a common scale, the covariance is uninterpretable. The *Correlation* standardizes the covariance to the scale of the two variables under consideration, to make it scale invariant.
+
+The *Pearson Correlation* is:
+
+$$\rho(x, y)  = \frac{\sum_x \sum_y (x_i - \bar{x}) (y_i - \bar{y})}{\sigma_x  \sigma_y}  = \frac{s_{xy}}{s_x s_y}$$
+
+This coefficient, $\rho_{xy}$ measures the linear association between two variables. It is bound on (-1 to 1), with a correlation of 1 meaning perfect positive linear association, and -1 meaning perfect negative linear association. In practice, if we get correlations in the neighborhood of the .3 to .6 range, we get excited.  
+
+```{r}
+cor(newpums$mywage, newpums$age, method = "pearson")
+```
+
+This is generally reserved for nicely behaved normally distributed continuous variables, you can use a nonparametric alternative, the *Spearman Correlation* if your data are not normal. This method just uses the ranks of the observations versus the actual values.
+
+```{r}
+cor(newpums$mywage, newpums$age, method = "spearman")
+cor(rank(newpums$mywage), rank(newpums$age))
+```
+
+
+
+
+##Really Real data example
+Now let's open a 'really real' data file. This is a sample from the 2015 1-year [American Community Survey](https://www.census.gov/programs-surveys/acs/) microdata, meaning that each row in these data is a person who responded to the survey in 2015. 
+
+I've done an extract (do example in class) and stored the data in a stata format on [my github data site](https://github.com/coreysparks/data). The file we are using is called [usa_00045.dta](https://github.com/coreysparks/data/blob/master/usa_00045.dta). 
+
+There is also a codebook that describes the data and all the response levels for each variable in the data. They are also on my github data page, and called [Codebook_DEM7273_IPUMS2015](https://github.com/coreysparks/data/blob/master/Codebook_DEM7273_IPUMS2015.pdf). 
+
+I can read it from github directly by using the `read_dta()` function in the `haven` library:
+
+```{r}
+
+newpums<-ipums%>%
+  filter( age>=18,  incwage>0 )%>%
+  mutate(lfpart=ifelse(labforce==1, 0, ifelse(labforce==2, 1, NA)),
+         birth=ifelse(fertyr==2, 1, 0),
+         mywage= ifelse(incwage%in%c(999998,999999), NA,incwage))%>%
+  mutate(race_eth = case_when(.$hispan %in% c(1:4) & .$race %in%c(1:9) ~ "hispanic", 
+                          .$hispan ==0 & .$race==1 ~"nh_white",
+                         .$hispan ==0 & .$race==2 ~"nh_black",
+                         .$hispan ==0 & .$race%in%c(3,7,8,9) ~"nh_other",
+                         .$hispan ==0 & .$race%in%c(4:6) ~"nh_asian",
+                          .$hispan==9 ~ "missing"), 
+         incq=cut(mywage, breaks = quantile(mywage, p=seq(0,1,.25))))
+
+table(newpums$incq, newpums$race_eth, newpums$lfpart, newpums$sex)
+test<-xtabs(~race_eth+sex+lfpart+incq, data=newpums)
+as.data.frame(test)
+
+newpums$race_eth<-relevel(as.factor(newpums$race_eth), ref = "nh_white")
+newpums<-newpums[sample(1:141000, size = 1000, replace=F), ]
+race_fert<-xtabs(~birth+race_eth, data=newpums)
+race_fert_perc<-aggregate(birth~race_eth, data=newpums, FUN = mean, na.rm=T)
+
+race_fert_perc$se<-tapply(newpums$birth, newpums$race_eth, FUN = function(x) {sd(x, na.rm=T)/length(x)})
+ggplot(data=race_fert_perc, aes(x=race_eth, y=birth))+geom_point(aes(color=race_eth))+geom_errorbar(aes( ymin=birth+1.96*se, ymax=birth-1.96*se, color=race_eth), width=.2 )+ylim(c(0, .05))
+#Column percentages
+prop.table(race_fert, margin = 2)
+
+
+#t1<-xtabs(~lfpart+birth+race_eth, newpums)
+#chisq.test(t1)
+#test<-as.data.frame(xtabs(~lfpart+birth+race_eth, newpums))
+
+#fit<-glm(Freq~(lfpart+birth+race_eth)^2, family = poisson, data=test)
+#summary(fit)
+#pchisq(deviance(fit), df = df.residual(fit), lower.tail = F)
+
+```
+
+

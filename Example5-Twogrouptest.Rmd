@@ -1,0 +1,302 @@
+---
+title: "DEM 7273 Example 5 - Comparing two groups with the linear model"
+author: "Corey S. Sparks, PhD"
+date: "September 20, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###Comparing groups
+
+At some point in our work we face the need of making comparisons between two (or more) groups of observations
+
+- We gave this group Drug A and the other group Drug G, and we want to know if group A did better
+- Is the poverty rate different in towns along the US-Mexico border than in towns not adjacent to the border?
+- Many times our data come with a priori group structure, as in
+the first example
+- More often, we end up constructing a group variable from other data, as in the second example 
+- If you are collecting your own data (such as an experimental setting), you will often specify comparison groups when you design your survey
+- But if you are using secondary data (collected by someone else) they may not have collected data in the same way as you need it, so you have to recode the data into another form.
+
+###Inspecting variation due to group structure
+
+- Initial investigation of differences across groups in the univariate setting is very common in social
+research.
+- We inspect our variables for differences between groups. This is often an initial step in larger analyses
+- It is often done to see if certain basic differences exist, then more complicated analyses are undertaken
+- *Generally a first-step kind of approach*
+
+
+###Traditional approach
+The classical method for comparing the *means* of two groups is to do a *t-test*, which assumes:
+
+- The two samples have been drawn from normal distribution
+- The observations within each sample are independent of one another
+- The sample sizes of the two samples, n1 and n2 are large (>30 each)
+- The the sample standard deviations, $s_1$ and  $s_2$ are equal
+
+Here's how you would do this in R, using the PRB data for now:
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+prb<-read_csv("https://raw.githubusercontent.com/coreysparks/data/master/PRB2013_new.csv", col_names=T)
+names(prb)<-tolower(names(prb))
+```
+
+Let's say we want to test for equality of the total fertility rate in African vs Non-African countries. To do this analysis completely, I would calculate summary statistics for each group, produce a graphical summary of the data, categorized by group *and only then* do the test. **Remember** it's best to explore your data first, before jumping into testing!
+
+```{r}
+prb_new<-prb%>%
+  mutate(Africa=ifelse(prb$continent=="Africa",yes= "Africa",no= "Not Africa"))
+
+#summary statistics by group
+prb_new%>%
+  group_by(Africa)%>%
+  summarise(means=mean(tfr, na.rm=T), sds=sd(tfr, na.rm=T), n=n())
+
+#boxplot
+prb_new%>%
+  ggplot(aes(x=Africa, y=tfr))+geom_boxplot()
+
+#test
+t.test(tfr~Africa, data=prb_new)
+
+```
+
+So, based on the things we just did, we can conclude:
+1) The summary statistics suggest that the means are very different between the two groups, African countries have a TFR of 4.61 on average, compared to non-African countries, who's TFR is 2.25. That's a difference of almost 2.4 children per woman on average.
+2) The graphical summary supports the statement that African countries have a overall higher distribution, but there are some countries whose fertility rate is lower that some non-African countries, and vice verse.
+3) The t-test shows that the means are **significantly** different from one another. How do I conclude this? First, the t-statistic is 11.59, with 69.8 degrees of freedom. The probability of seeing a value this large from this t-distribution is:
+
+```{r}
+#get the various parts of t statistic
+n1<-length(prb_new$tfr[prb_new$Africa=="Africa"])
+n2<-length(prb_new$tfr[prb_new$Africa=="Not Africa"])
+m1<-mean(prb_new$tfr[prb_new$Africa=="Africa"], na.rm=T)
+m2<-mean(prb_new$tfr[prb_new$Africa=="Not Africa"], na.rm=T)
+s1<-var(prb_new$tfr[prb_new$Africa=="Africa"], na.rm=T)
+s2<-var(prb_new$tfr[prb_new$Africa=="Not Africa"], na.rm=T)
+
+#calculate t
+t<-(m1-m2 )/ sqrt(s1/n1 +s2/n2)
+#get the p value
+2*pt(-abs(t), df=n2-n1)
+
+```
+
+which is very, very small. So this would say that we reject the null hypothesis that the means are equal with great confidence. 
+
+###This is great!
+We've learned a new test that we can use under a specific situation!! 
+
+See this [video](https://lifehacker.com/watch-alton-brown-demonstrate-why-unitaskers-have-no-1749470145) for how I feel about having tests that do one thing only.
+
+
+I propose that we try to minimize the use of uni-tasker tests, in favor of using more general classes of models that can be used in many settings. 
+
+#Linear statistical models
+I learned these things from [this text](https://www.amazon.com/Applied-Linear-Statistical-Models-Neter/dp/0256117365/ref=sr_1_1?ie=UTF8&qid=1505920651&sr=8-1&keywords=applied+linear+statistical+models+neter), and it's really good, and certainly not the only game in town. It's also kind of old now. What I learned from this book is that the linear model is **extremely** flexible and useful in many, many settings, besides just linear regression.
+
+I also read [this book](http://www.mosaic-web.org/go/StatisticalModeling/), which, as a basis for teaching everything, uses the linear model as the jumping off point; which made a lot of sense to me, of course.
+
+#What this is not
+I'm not going to review linear statistical models here, there are 1,000 page books for that, and Field covers this well in chapters 7, 10 and 11 of his [book](https://us.sagepub.com/en-us/nam/discovering-statistics-using-r/book236067%20). 
+
+
+###Linear model to compare two groups.
+So, this would be how I would write a linear model to compare two group means. **This assumes your dependent variable is continuous.**
+
+Some Definitions:
+$y_i$ = Your outcome measure on each of the $i = 1 \cdots n$ observations
+**Group** = A binary representation of your two groups (see above: Africa, Not Africa)
+$\beta_0$ = the mean of the "baseline" group - you choose what group this is
+$\beta_1$ = how much the mean of the comparison group differs from the baseline group
+$\epsilon$ = residual variation in the mean
+
+The model would then be:
+
+$y_i = \beta_0 + \beta_1*\text{Group} + \epsilon_i$
+
+Assuming:
+
+$\epsilon_i \sim \text{Normal}(0, \sigma^2_{\epsilon})$
+
+####What this says:
+is, that we estimate one group's mean to be $\beta_0$ and the express the other group's mean as: $\beta_0 + \beta_1$. 
+
+We then test the hypothesis that $\beta_1 = 0$. Or, is the difference in mean's between the two groups equal 0.
+
+Here is a model like the one we did above for the African - Non African comparison: 
+$\text{TFR}_i = \beta_0 + \beta_1*\text{Not Africa} + e_i$
+
+
+Where $\beta_0$ is the mean TFR in Africa, and $\beta_1$ describes how the mean of the Non-African countries relates to the mean of the African countries. 
+
+e contains all the information on TFR that the difference between groups doesn't explain, and is called the *residual*.
+
+
+Now we do the test:
+
+```{r}
+library(broom)
+africa_fit<-lm(tfr~Africa, data=prb_new)
+tidy(africa_fit)
+
+```
+
+So, the labels here are a little different, $\beta_0$ is labeled as `(Intercept)` and $\beta_1$ is labeled as `AfricaNot Africa`, indicating that the "Not Africa" group is being compared to the "Africa" group.
+
+the mean for African countries is $\beta_0$ =  `r round(coef(africa_fit)[1], 2)` and the mean for the Non African countries is $\beta_0 + \beta_1$ = `r round(coef(africa_fit)[1], 2)+round(coef(africa_fit)[2],2)`, based on the estimated parameters.
+
+How does this compare with our simpler descriptive reality?
+```{r}
+#summary statistics by group
+prb_new%>%
+  group_by(Africa)%>%
+  summarise(means=mean(tfr, na.rm=T), sds=sd(tfr, na.rm=T), n=n())
+
+```
+
+Spot on!
+
+#Wait!
+
+We need to evaluate a key assumption about the errors of the model. 
+
+```{r fig.width=7, fig.height=6 }
+qqnorm(rstudent(africa_fit), main="Q-Q Plot for Model Residuals")
+qqline(rstudent(africa_fit), col="red")
+```
+
+Not bad, if everything was perfect, then all the dots would line up on the line.
+
+There's a formal, but overly sensitive test for normality that we can use here:
+
+```{r}
+shapiro.test(resid(africa_fit))
+```
+
+Which fails the normality test. This is pretty important assumption of the linear model in many settings, here not so much. But we should do our due diligence. If you have evidence of non-normality of your residuals, you can attempt to transform the dependent variable via a set of approaches. 
+
+###Typical transformations
+Things we can try are the:
+natural log transform = `log(x)`
+square root transform  = `sqrt(x)`
+reciprocal transformation = `1/x`
+
+
+We'll try the log transform first:
+
+```{r}
+africa_fit<-lm( log(tfr)~Africa, data=prb_new)
+tidy(africa_fit)
+
+```
+
+So everything is on a differnt scale now, and doesn't look right. We can recover the real means by exponentiating the coefficients:
+
+```{r}
+#African mean
+exp(coef(africa_fit)["(Intercept)"])
+exp(sum(coef(africa_fit)))
+
+```
+
+The means are a little different from the un-transformed data, but we're still right on target with our analysis, and our interpretation has not changed.
+
+We can examine the normality assumption here:
+
+```{r}
+qqnorm(rstudent(africa_fit), main="Q-Q Plot for Model Residuals")
+qqline(rstudent(africa_fit), col="red")
+shapiro.test(resid(africa_fit))
+```
+
+The dots line up better and the Shapiro-Wilk test has a p value larger that typical $\alpha$ levels, so it looks like we are good.
+
+
+
+##Really Real data example
+Now let's open a 'really real' data file. This is a sample from the 2015 1-year [American Community Survey](https://www.census.gov/programs-surveys/acs/) microdata, meaning that each row in these data is a person who responded to the survey in 2015. 
+
+I've done an extract (do example in class) and stored the data in a stata format on [my github data site](https://github.com/coreysparks/data). The file we are using is called [usa_00045.dta](https://github.com/coreysparks/data/blob/master/usa_00045.dta). 
+
+There is also a codebook that describes the data and all the response levels for each variable in the data. They are also on my github data page, and called [Codebook_DEM7273_IPUMS2015](https://github.com/coreysparks/data/blob/master/Codebook_DEM7273_IPUMS2015.pdf). 
+
+I can read it from github directly by using the `read_dta()` function in the `haven` library:
+
+```{r}
+library(haven)
+ipums<-read_dta("https://github.com/coreysparks/data/blob/master/usa_00045.dta?raw=true")
+
+newpums<-ipums%>%
+  filter(labforce==2, age>=18, incwage>0)%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA,incwage),
+         sexrecode=ifelse(sex==1, "male", "female"))
+  
+newpums%>%
+  group_by(sexrecode)%>%
+  summarise(means=mean(mywage, na.rm=T))
+
+newpums$logwage<-log(newpums$mywage)
+newpums%>%
+   ggplot(aes(x=sexrecode, y=logwage))+geom_boxplot()
+
+newpums%>%
+   ggplot(aes(mywage))+geom_histogram()
+
+
+t.test(mywage~sexrecode, data=newpums)
+
+sexinc<-lm(mywage~sexrecode, data=newpums)
+tidy(sexinc)
+```
+
+So, men make more money on average than women. The difference is about $20,000 dollars.
+
+Want to see some really non-normal residuals?
+
+```{r}
+qqnorm(rstudent(sexinc), main="Q-Q Plot for Model Residuals")
+qqline(rstudent(sexinc), col="red")
+```
+
+
+We can try transforms:
+
+```{r}
+sexinc2<-lm(log(mywage)~sexrecode, data=newpums)
+
+sexinc3<-lm(sqrt(mywage)~sexrecode, data=newpums)
+
+sexinc4<-lm(I(1/mywage)~sexrecode, data=newpums)
+
+qqnorm(rstudent(sexinc2), main="Q-Q Plot for Model Residuals")
+qqline(rstudent(sexinc2), col="red")
+
+qqnorm(rstudent(sexinc3), main="Q-Q Plot for Model Residuals")
+qqline(rstudent(sexinc3), col="red")
+
+qqnorm(rstudent(sexinc4), main="Q-Q Plot for Model Residuals")
+qqline(rstudent(sexinc4), col="red")
+
+```
+
+Honestly, none of these make me very happy.
+
+#What to do, what to do?
+1) Are you planning on using this model for prediction? 
+
+- No - Use the test to do your comparison and stop
+- Yes - Don't
+
+2) Are my results valid?
+
+- Yes - the means are different, we know that based on lots of evidence.
+
+
+

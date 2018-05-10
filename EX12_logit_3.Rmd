@@ -1,0 +1,167 @@
+---
+title: "DEM 7273 -  Logit Models Part 2 - Model stratification"
+author: "Corey Sparks, PhD"
+date: "November 29, 2017"
+output:
+  html_document:
+    fig_height: 7
+  pdf_document:
+    latex_engine: xelatex
+---
+
+
+Last time, we saw the logistic regression model:
+
+If our outcome is dichtomous (1/0), the natural distribution to consider for a GLM is the binomial
+$$y \sim \ \text{Binomial}\binom{n}{p}$$
+with $p$ being the mean of the binomial, and n being the number of trials, generally when you have individual data, n is always 1, and p is the probability of observing the 1, conditional on the observed predictors. There are two common techniques to estimate the mean, logistic and probit regression. In a Logistic model, the link function is the inverse logit function, or
+
+$\text{Logit}^{-1}(p) =log \frac{p}{(1-p)}$
+
+Which gives us the following conditional mean model:
+
+$$E(y|x)  = \frac{1}{1+ exp({-\sum_k \beta_k x_{ik}})}$$
+Which situates the model within the logistic distribution function. Expressing *p* as a linear model is done via this log odds transformation of the probability:
+
+$$log \frac{p}{(1-p)} = \sum_k \beta_k x_{ik}$$
+
+##Stratified models
+Often in the literature, we will see models stratified by some predictor. This is usually because a specific hypothesis is stated regarding how the effect of a particular predictor varies by some categoricial variable. In this case, we may be interested in considering if education or race universally affects the migration outcome. We get at this by *stratifying* our analysis by race (in this example).
+
+The easiest way to do this is to subset the data by race and run the models separately. 
+
+**The first thing we do** is test for the interaction of education and race. If this interaction is not significant, we have no justification for proceeding, becuase the effect of education does not vary by race group. **This is the test of parallel slopes, a' la the ANCOVA model**
+
+
+```{r}
+library(haven)
+library(dplyr)
+library(stargazer)
+library(ggplot2)
+library(knitr)
+
+ipums<-read_dta("https://github.com/coreysparks/data/blob/master/usa_00045.dta?raw=true")
+
+newpums<-ipums%>%
+  filter(labforce==2, age>=18, incwage>0, relate==1)%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA,incwage),
+         unemp=ifelse(empstat==2,1,0), #unemployment
+         mig=as.factor(migrate1), #moved in past year
+         sexrecode=ifelse(sex==1, "male", "female"))%>%
+  mutate(race_eth = case_when(.$hispan %in% c(1:4) & .$race %in%c(1:9) ~ "hispanic", 
+                          .$hispan ==0 & .$race==1 ~"0nh_white",
+                         .$hispan ==0 & .$race==2 ~"nh_black",
+                         .$hispan ==0 & .$race%in%c(3,7,8,9) ~"nh_other",
+                         .$hispan ==0 & .$race%in%c(4:6) ~"nh_asian",
+                          .$hispan==9 ~ "missing"))%>%
+  mutate(edurec = as.factor(case_when(.$educd %in% c(0:61)~"nohs", 
+                            .$educd %in% c(62:64)~"hs",
+                            .$educd %in% c(65:100)~"somecoll",
+                            .$educd %in% c(101:116)~"collgrad", 
+                            .$educd ==999 ~ "missing")) )
+```
+
+
+###fitting the models
+
+In genearl, we need to compare the model with race and education as independent variables to the model where they interact with one another. We can do this with a F-test for a linear model, but for a glm we need to use a $\chi^2$ test. 
+
+```{r}
+#Logit model
+fit.logit1<-glm(mig~race_eth+edurec+sexrecode+scale(age)+scale(I(age^2)),data=newpums, family=binomial)
+
+fit.logit2<-glm(mig~race_eth*edurec+sexrecode+scale(age)+scale(I(age^2)),data=newpums, family=binomial)
+
+anova(fit.logit2, test="Chisq" )
+```
+
+In this case, we see a significant interaction between race and education. So we can conclude that education does not affect the liklihood of migration equally for all race/ethnicities in our data. This gives us some statistical justificaiton to stratify the analysis by race.
+
+###Stratifying the models by a categorical variable
+This is done by using the `subset` option in most modeling fuctions in R.
+
+```{r}
+#nhwhites
+fit_w<-glm(mig~edurec+sexrecode+scale(age)+scale(I(age^2)),data=newpums, family=binomial, subset= race_eth=="0nh_white")
+
+#nhblacks
+fit_b<-glm(mig~edurec+sexrecode+scale(age)+scale(I(age^2)),data=newpums, family=binomial, subset= race_eth=="nh_black")
+
+#hispanics
+fit_h<-glm(mig~edurec+sexrecode+scale(age)+scale(I(age^2)),data=newpums, family=binomial, subset= race_eth=="hispanic")
+
+#asians
+fit_a<-glm(mig~edurec+sexrecode+scale(age)+scale(I(age^2)),data=newpums, family=binomial, subset= race_eth=="nh_asian")
+
+
+#other
+fit_o<-glm(mig~edurec+sexrecode+scale(age)+scale(I(age^2)),data=newpums, family=binomial, subset= race_eth=="nh_other")
+
+```
+
+
+#Present all model coefficients next to one another
+
+```{r , results='asis'}
+stargazer(fit_w,fit_b,fit_h,fit_a,fit_o, type = "html", style = "demography", ci = T,  model.names = T, column.labels = c("white" , "black", "hispanic", "asian", "other"),keep.stat = c("n"))
+```
+
+These models show the exact same patterns of effects, with Hispanics, blacks and multi-race individuals showing increased chances of reporting poor/fair health, when compared to whites (Reference group). Similarly, the education variables shows a negative linear trend, with those with more education having lower chances of reporting poor/fair health compared to those with a primary school education (Reference group), and likewise, as people get older, they are more likely to report poor/fair health, compared to those under age 24 (Reference group).
+
+
+
+##Homogeneity of effects across models
+
+```{r}
+beta.test<-function(model1, model2, betaname){
+s1<-summary(model1)$coef
+s2<-summary(model2)$coef
+db <- ((s2[rownames(s2)==betaname,1]-s1[rownames(s1)==betaname,1]))^2
+sd <-s2[rownames(s2)==betaname,2]^2+s1[rownames(s1)==betaname,2]^2
+td <- db/sd
+beta1=s1[rownames(s1)==betaname,1]
+beta2=s2[rownames(s2)==betaname,1]
+pv<-1- pchisq(td, df = 1)
+print(list(beta=betaname,beta1=beta1, beta2=beta2, x2=td, pvalue=pv))
+}
+```
+
+Here is an example of testing if the "high school" effect is the same among whites and blacks. This follows the logic set forth in [Allison 2010, p 219](https://books.google.com/books?id=RmbZ2y1KLwUC&q=219#v=snippet&q=219&f=false)
+
+Test for $\beta_{1j} = \beta_{1k}$ in two models $j \text{ and } k$
+$$\chi^2= \frac{(\beta_{1j} - \beta_{1k})^2}{\left[ s.e.(\beta_{1j}) \right]^2+\left[ s.e.(\beta_{1k}) \right]^2}$$
+
+Where you have beta's (the same regression effect), in two different models, and you want to see if they are equal.
+
+```{r}
+beta.test(fit_w, fit_b, betaname = "edurechs")
+
+
+```
+
+Which looks like the High school education effect is not equal between blacks and whites, for whites, the effect is negative and statistically significant, and blacks the effect is positive and not significant.
+
+
+###Chow tests
+If we do this for all our beta's in our model, this is referred to as a Chow test, following [Chow, 1960](https://www.jstor.org/stable/1910133?seq=1#page_scan_tab_contents). This is a test for equality of regression effects in different regression models. It is a 'global test', meaning that it tests for equality of *all* regression effects, as opposed to the test above, which considers one at a time.
+
+```{r}
+#construct a test of whether the betas are the same for each race group
+#See Allison p 217 for this
+
+#deviance from total model, the one with all subjects in it
+d1<-fit.logit1$deviance
+
+#sum of deviances from stratified models
+otherds<- (fit_w$deviance+ fit_b$deviance+ fit_h$deviance+fit_a$deviance+fit_o$deviance)
+
+#Chow test
+test<- d1-otherds
+df<-(length(coef(fit_w))*5)-length(coef(fit.logit1))
+#print the test results
+print(list(chowtest=test, df=df,pval= pchisq(test, df=df, lower=F)))
+
+
+```
+
+Which is our Chow test, and the result means that not all races have the same effects of of education, sex or age. This is a global test, so if you want to see which coefficients are different, use the coefficient tests above.

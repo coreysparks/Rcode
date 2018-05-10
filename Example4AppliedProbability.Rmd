@@ -1,0 +1,243 @@
+---
+title: "DEM 7273 - Example 3 - Applied Probability"
+author: "Corey Sparks, PhD"
+date: "September 13, 2017"
+output:
+  html_document:
+    keep_md: no
+  html_notebook:
+    toc: yes
+---
+
+This material will cover some applicable areas of probability. 
+
+##Common distributions
+There are many, many distributions in the statistics literature, and most have specific applications in particular areas of statistics. There are some that are everywhere and are used every day whether you know it or not. 
+
+The first two are examples of *discrete* probability distributions, because they are used for discrete values: 0/1, or integers (1,2,3,4,...). They also only are used for positive values, no negative values are allowed.
+
+###Binomial Distribution
+Whenever you calculate a proportion, you're calculating the mean of a binomial distribution.
+It has density:
+
+$Pr(y;n) = \binom{y}{n}\pi^y(1-\pi)^{n-y}$
+
+The binomial distribution measures the number of successes out of n random trials.  Each of the n trials can have one of two possible outcomes (yes/no, 1/0, on/off). So each trial is a realization of a binary variable. The probability of success at each particular trial is denoted, $\pi$, and is the same for each trial.
+
+- Think of flipping a coin, .5 chance=Heads, .5 chance=tails
+  - Each trial is independent of one another
+  - The coin doesn't remember the last flip
+  
+- The random variable, y, is the number of successes observed during the n trials. So when you calculate a percentage, say the percentage of female students in our class, you divide the number of successes (sex=female, in this case) by the number of trials (number of students) `r 3/10`. 
+
+The binomial distribution has one parameter, $\pi$, which is the mean, which can also be thought of as the 'probability of success' 
+
+
+###Poisson Distribution
+It is commonly used to model counts of events that occur in discrete periods of time or space. 
+It has density:
+
+$Pr(\text{k events in interval})= e^{-\lambda}\frac{\lambda^k}{k!}$
+
+The assumptions of the Poisson distribution are:
+  - Events occur 1 at a time (and not at the exact same time/place/to the same person)
+  - Each occurrence at a given time or place is independent 
+  - The expected number of events, ??, at any time or place is the same at all times/places
+
+The Poisson has a single parameter, the mean, often written as $\lambda$. 
+
+###Normal Distribution
+Probably the most widely used and abused continuous distribution is the Normal, or Gaussian distribution. Compared to the two discrete distributions mentioned above, the continous distribution assumes that data may be positive or negative and come from anywhere on the real number line. 
+
+It has density
+$Pr(y|\mu, \sigma) = \frac{1}{\sqrt{2\pi\sigma^2}}e^{-\frac{(y-\mu)^2}{2\sigma^2}}$
+
+It is very useful, because all manner of outcomes are continuous in nature and can be both positive and negative. It is also useful becuase it's two parameters $\mu$ and $\sigma^2$ allow the distribution to have lots of different shapes. 
+
+
+###Variation in a statistic - Standard errors
+When we sample from a population, we hope that the sampled observations tell us something about the population as a whole. 
+
+- The sample mean $\sim$ the population mean
+
+- Under random sampling, the sample mean, over infinitely many different samples will be equal to the true population mean 
+
+- Or, on average over many studies, the sample mean provides a good estimate of the population mean. Under random sampling, the variance of the sample mean, over infinitely many different samples will be equal to $\sigma /n$
+
+- Or, the average squared difference between the sample mean and the population mean is $E[(y-\mu)] = \sigma/n$. 
+
+Furthermore, when observations are sampled form a Gaussian distribution, the sample mean also has a Gaussian distribution. So when we have n observations from a Gaussian distribution with mean $\mu$ and variance $\sigma^2$ the sample mean has a normal distribution with mean $\mu$ and variance $\sigma^2 /n$
+
+This is a strong implication, that any value of a sample mean we observe can be characterized by the probability of observing such a sample mean from said population. 
+
+The quantity $\sigma/n$ is called the *standard error* of the mean, and is the amount of variation in the estimate of the mean itself. When this is large, the mean is not very precisely estimated, when it is small, the mean has a lot of precision. This is true for any parameter, not just the mean.
+
+
+###Variation in a statistic - confidence interval
+What is a confidence interval?
+
+- It is NOT the probability that a value falls between two points
+- It is NOT the amount of certainty that you have that an estimate takes a certain value
+- It is NOT the variability in an estimate
+- It is, an interval, based on observed data, that contains an unknown population parameter with some specified probability
+- So it is a statement about the likelihood that the true parameter value occurs between two bounds, an upper and a lower
+
+##The Bootstrap
+Bootstrapping is a versatile method for doing lots of things in
+statistics.
+
+Let's say we want to calculate the standard error of the mean, but we don't have a normal distribution or a large
+sample:  Both bad news
+
+- Bootstrapping will use our own data to figure out a confidence interval. This is done by resampling the data many times and calculating the statistic of interest in each of these samples
+
+Bootstrapping takes repeated subsamples of the observed data, thus producing a large number of replicate data sets. This can be done with or without replacement. i.e. each original value CAN appear multiple times in each subsample
+
+
+How?
+
+1. Select a random sample from the population of size n, this is our original data 
+2. Compute your observed statisic of interest, mean, etc.$\mu$ or $\sigma$
+3. Select a random sample from the population of size n from the original data
+yielding $y_1*, y_2*, ..., y_n*$
+4. compute your statistic of interest from the subsample
+5. repeat a large number of times, B = 100 for instance $\mu*$
+6. We then have B estimates of our statistic of interest
+
+A straight forward way to get the 95% confidence interval is to take the (.025) and (0.975) percentiles of our observed B statistics using a quantile function.
+
+##Really Real data example
+Now let's open a 'really real' data file. This is a sample from the 2015 1-year [American Community Survey](https://www.census.gov/programs-surveys/acs/) microdata, meaning that each row in these data is a person who responded to the survey in 2015. 
+
+I've done an extract (do example in class) and stored the data in a stata format on [my github data site](https://github.com/coreysparks/data). The file we are using is called [usa_00045.dta](https://github.com/coreysparks/data/blob/master/usa_00045.dta). 
+
+There is also a codebook that describes the data and all the response levels for each variable in the data. They are also on my github data page, and called [Codebook_DEM7273_IPUMS2015](https://github.com/coreysparks/data/blob/master/Codebook_DEM7273_IPUMS2015.pdf). 
+
+I can read it from github directly by using the `read_dta()` function in the `haven` library:
+
+```{r load data}
+library(haven)
+ipums<-read_dta("https://github.com/coreysparks/data/blob/master/usa_00045.dta?raw=true")
+names(ipums) #print the column names
+
+```
+
+Here I make a new, subset dataset from the big ipums data that only contains people who are in the labor force and over age 18.
+
+```{r recodeipums, echo=TRUE}
+library(dplyr)
+
+newpums<-ipums%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA, incwage))%>%
+  filter(labforce==2, age>=18)
+
+mean(newpums$famsize)
+```
+
+##Normal approximation confidence intervals
+R doesn't have a function to compute a confidence interval from a normal distribution, so we will write one
+
+```{r}
+#
+norm.interval = function(data, conf.level = 0.95) 
+{z = qnorm((1 - conf.level)/2, lower.tail = FALSE)
+
+ variance = var(data, na.rm=T)
+ xbar = mean(data, na.rm=T)
+ sdx = sqrt(variance/length(data))
+ list(lower=(xbar - z * sdx), upper=(xbar + z * sdx)) }
+
+norm.interval(newpums$mywage)
+```
+
+#calculate confidence intervals for groups
+
+```{r}
+sefun<-function(x) {sd(x, na.rm=T)/table(is.na(x))[1]}
+
+
+ipums%>%
+  mutate(mywage= ifelse(incwage%in%c(999998,999999), NA, incwage),sexrecode=ifelse(sex==1, "male", "female"))%>%
+  filter(labforce==2, age>=18)%>%
+  group_by(sexrecode)%>%
+  summarise(myse=sefun(mywage))
+```
+
+or we can use the t distribution, which `t.test()` will give us
+
+```{r}
+t.test(newpums$mywage)
+```
+
+
+likewise, R doesn't have a function to compute a confidence interval for a variance, whose sampling distribution is a $\chi^2$, so we write one of those too:
+
+```{r}
+ var.interval = function(data, conf.level = 0.95) {
+  df = length(data) - 1
+       chilower = qchisq((1 - conf.level)/2, df)
+       chiupper = qchisq((1 - conf.level)/2, df, lower.tail = FALSE)
+       v = var(data, na.rm=T)
+   c(df * v/chiupper, df * v/chilower) }
+
+var(newpums$mywage, na.rm=T)
+var.interval(newpums$mywage)
+
+```
+
+##Bootstrap confidence intervals
+We see below the hard way to do a bootstrap, by doing it ourselves, and the easy way using the `bootstrap` library.
+
+Here, I calculate confidence intervals by simulation, this is referred to as boot strapping the mean
+
+```{r ipums4, echo=TRUE}
+n.sim<-1000
+
+mus<-numeric(n.sim)
+vars<-numeric(n.sim)
+for (i in 1:n.sim){  
+  dat<-sample(newpums$mywage,size=length(newpums$mywage), replace=T)
+  mus[i]<-mean(dat, na.rm=T)
+  vars[i]<-var(dat, na.rm=T)
+}
+
+
+par(mfrow=c(1,2))
+hist(mus,freq=F, main="Bootstrap distribution of means")
+abline(v=mean(newpums$mywage, na.rm=T), col=2, lwd=3)
+
+hist(vars, freq=F,main="Bootstrap distribution of variance")
+abline(v=var(newpums$mywage, na.rm=T), col=2, lwd=3)
+```
+
+Here are the bootstrap confidence intervals using percentile method
+
+```{r}
+quantile(mus, p=c(.025, .975))
+quantile(vars, p=c(.025, .975))
+
+```
+
+or we could use the bootstrap library, but these will give slightly different answers, but they're pretty close
+
+```{r}
+library (bootstrap)
+
+test1<-bootstrap(newpums$mywage, nboot=1000, theta=mean, na.rm=T)
+
+sd(test1$thetastar)
+sd(mus)
+library(boot)
+my.mean = function(x, indices) {
+return( mean( x[indices] ) )
+}
+
+myboot<-boot(newpums$mywage, my.mean,  R=1000)
+
+myboot
+
+sd(mus)
+```
+
+
+
