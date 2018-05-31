@@ -5,3 +5,4 @@ install.views(c("SocialSciences", "ReproducibleResearch", "Spatial"), coreOnly =
 devtools::install_github("jannes-m/RQGIS", dep=TRUE)
 devtools::install_github("tidyverse/ggplot2")
 
+devtools::install_github("thomasp85/patchwork")
