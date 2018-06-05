@@ -6,3 +6,5 @@ devtools::install_github("jannes-m/RQGIS", dep=TRUE)
 devtools::install_github("tidyverse/ggplot2")
 
 devtools::install_github("thomasp85/patchwork")
+
+devtools::install_github("oswaldosantos/ggsn")
