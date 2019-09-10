@@ -1,0 +1,32 @@
+---
+title: "DEM 7223 Event History Analysis - Homework 1"
+author: "Corey Sparks, PhD"
+date: "9/10/2019"
+output: html_document
+---
+
+# Part A
+## Descriptive Analysis
+
+### Definitions
+ - List 1
+ - List 2
+ - List 3
+
+### Descriptive estimates
+
+### Kaplan Meier estimates
+
+# Part B
+## Parametric models
+
+
+
+# Part C 
+## Write Up
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Donec ultrices tincidunt arcu non sodales neque sodales. Habitant morbi tristique senectus et netus et malesuada fames. Purus gravida quis blandit turpis cursus in hac habitasse platea. Pellentesque adipiscing commodo elit at imperdiet. Sed euismod nisi porta lorem mollis aliquam ut. Nibh mauris cursus mattis molestie a iaculis. Duis ultricies lacus sed turpis tincidunt id. Senectus et netus et malesuada fames ac turpis egestas sed. Tellus elementum sagittis vitae et leo duis ut diam quam. Feugiat nisl pretium fusce id. Ante metus dictum at tempor commodo ullamcorper a.
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Donec ultrices tincidunt arcu non sodales neque sodales. Habitant morbi tristique senectus et netus et malesuada fames. Purus gravida quis blandit turpis cursus in hac habitasse platea. Pellentesque adipiscing commodo elit at imperdiet. Sed euismod nisi porta lorem mollis aliquam ut. Nibh mauris cursus mattis molestie a iaculis. Duis ultricies lacus sed turpis tincidunt id. Senectus et netus et malesuada fames ac turpis egestas sed. Tellus elementum sagittis vitae et leo duis ut diam quam. Feugiat nisl pretium fusce id. Ante metus dictum at tempor commodo ullamcorper a.
+
+
