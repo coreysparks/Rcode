@@ -1,0 +1,68 @@
+---
+title: "cps analysis covid"
+author: "Corey Sparks, PhD"
+date: "5/18/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 
+
+```{r}
+library(ipumsr)
+library(dplyr)
+library(car)
+library(zoo)
+library(ggplot2)
+library(questionr)
+library(tidyquant)
+library(fpp)
+```
+
+```{r}
+ddi<-read_ipums_ddi("/media/corey/extra/cps_00024.xml")
+cpsdat<-read_ipums_micro(ddi)
+cpsdat<-zap_labels(cpsdat)
+```
+
+```{r}
+
+stfips<-data.frame(stfip=unique(tidycensus::fips_codes$state_code), stname=unique(tidycensus::fips_codes$state_name))
+
+cpsdat<-merge(cpsdat, stfips, by.x="STATEFIP", by.y= "stfip")
+
+cpsdat2<-cpsdat%>%
+  filter(YEAR >2009,AGE>18& AGE<65, EMPSTAT<30)%>%
+  mutate(emp = Recode(EMPSTAT, recodes = "0 = NA; 1='af'; 10='curr work'; 12 = 'recent no job'; 20:22='unemp'"))%>%
+  mutate( curremp = ifelse(emp =='curr work' , 1, 0))
+
+cpsdat2$month<- as.Date(as.yearmon(paste(cpsdat2$YEAR,cpsdat2$MONTH, sep="/"), format = "%Y/%m"))
+
+
+out<-cpsdat2%>%
+  group_by(month)%>%
+  summarise(emprate =1- wtd.mean(curremp,weights = WTFINL, na.rm=T))%>%
+  arrange( month)%>%
+  ungroup()
+
+#test<-as.list(tapply(out$emprate, out$stname, FUN = ts, start = c(2017,1), end = c(2020, 3), frequency = 12))
+ts1<-ts(out$emprate, start = c(2017,1), end = c(2020, 4), frequency = 12)
+
+#lapply(test, decompose, type="add")
+
+adjust1<-decompose(ts1,type =  "add")
+adjust2<-ts1 - adjust1$seasonal
+
+test<-data.frame(month = unique(out$month), unemprate = adjust2)
+
+ggplot(data=test, aes(month, unemprate))+geom_line()+labs(title = "Seasonally Adjusted Unemployment Rate",
+       subtitle = "Jan 2017 to April 2020",
+       caption = "Source: IPUMS CPS Monthly Data \n Calculations by Corey S. Sparks, Ph.D.",
+       x = "Month",
+       y = "Unemployment Rate")+theme_minimal()
+
+ggsave(filename="~/emprate.png", height=10, width=12)
+```
