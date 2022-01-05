@@ -40,7 +40,7 @@ cos$fips<-as.numeric(cos$GEOID)
 #ests<-get_estimates(geography="county", year=2018, product = "characteristics",breakdown = "AGEGROUP", output = "wide")
 # head(ests)
 # save(ests, file="~/Documents/GitHub//county_age_estimates.Rdata")
-load("~/Documents/GitHub/county_age_estimates.Rdata")
+load("https://github.com/coreysparks/data/blob/master/county_age_estimates.Rdata?raw=true")
 est65<-ests[ests$AGEGROUP==26,]
 total<-ests[ests$AGEGROUP==0,]
 po65<-cbind(est65[, c(1,2,3)], total[,3 ])
