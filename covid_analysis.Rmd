@@ -1,0 +1,417 @@
+---
+title: "Covid-19 Rate Analysis"
+author: "Corey Sparks, PhD"
+date: "4/8/2020"
+output:
+   html_document:
+    df_print: paged
+    fig_height: 8
+    fig_width: 11
+    toc: yes
+    includes:
+      in_header: logo.html
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r, message=FALSE}
+library(dplyr)
+library(tigris)
+options(tigris_class = "sf")
+library(tidycensus)
+library(data.table)
+library(tidyquant)
+library(ggplot2)
+
+```
+
+## Spatial data
+```{r, results='hide'}
+cos<-counties(state="TX", cb=T)
+cos$fips<-as.numeric(cos$GEOID)
+```
+
+## Population estimates data
+```{r}
+#ests<-get_estimates(geography="county", year=2018, product = "characteristics",breakdown = "AGEGROUP", output = "wide")
+# head(ests)
+# save(ests, file="~/Documents/GitHub//county_age_estimates.Rdata")
+load("~/Documents/GitHub/county_age_estimates.Rdata")
+est65<-ests[ests$AGEGROUP==26,]
+total<-ests[ests$AGEGROUP==0,]
+po65<-cbind(est65[, c(1,2,3)], total[,3 ])
+names(po65)<-c("cofips", "name", "n65plus", "ntotal")
+po65$p65plus<-po65$n65plus/po65$ntotal
+head(po65)
+po65$p65cut<-cut(po65$p65plus, breaks = quantile(po65$p65plus, p=seq(0, 1, length.out = 4)), include.lowest = T)
+```
+
+## COVID data
+To get these, I cloned the [git repository from Johns Hopkins ](https://github.com/CSSEGISandData/COVID-19) to my local machine
+
+```{r}
+dir<-"C:/Users/ozd504/Documents/GitHub//COVID-19/csse_covid_19_data/csse_covid_19_time_series/"
+
+list.files(dir)
+files<-list.files(dir, pattern = ".csv", full.names = T)
+files
+```
+
+```{r}
+dat<-read.csv("~/Documents/GitHub//COVID-19/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv") #cases
+dat2<-read.csv("~/Documents/GitHub//COVID-19/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv") #deaths
+
+#clean case data
+test<-dat%>%
+  filter(Province_State %in% unique(fips_codes$state_name)[1:51])%>%
+  mutate(cofips = formatC(FIPS, width=5, format="d", flag="0"))%>%
+  mutate(st=substr(cofips, 1,2))%>%
+  select(-UID, -iso2, -iso3, -code3, -Admin2, -Country_Region, -Lat, -Long_, -Combined_Key)%>%
+  #filter(st=="48")%>%
+  #select(names(.)[c(-1:-5, -8:-11)])%>%
+  setDT(.)%>%
+  melt(., id.vars = c("cofips"), measure.vars = grep("X", names(.), value = T))%>%
+  filter(is.na(cofips)==F, cofips!= "   NA")%>%
+  arrange(cofips, variable)
+
+test$date<-rep(seq.Date(from=as.Date("2020/1/22"), to=Sys.Date()-1, by="day"),length(unique(test$cofips)) )
+
+#clean death data
+test2<-dat2%>%
+  filter(Province_State %in% unique(fips_codes$state_name)[1:51])%>%
+  mutate(cofips = formatC(FIPS, width=5, format="d", flag="0"))%>%
+  mutate(st=substr(cofips, 1,2))%>%
+  select(-UID, -iso2, -iso3, -code3, -Admin2, -Country_Region, -Lat, -Long_, -Combined_Key)%>%
+    #filter(st=="48")%>%
+  filter(is.na(cofips)==F)%>%
+  #select(names(.)[c(-1:-5, -8:-12)])%>%
+  setDT(.)%>%
+  melt(., id.vars = c("cofips"), measure.vars = grep("X", names(.), value = T))%>%
+  filter(is.na(cofips)==F, cofips!= "   NA")%>%
+  arrange(cofips, variable)
+
+test2$date<-rep(seq.Date(from=as.Date("2020/1/22"), to=Sys.Date()-1, by="day"),length(unique(test$cofips)) )
+test2$deaths<-test2$value
+
+names(test)<-c("cofips", "day", "value", "date")
+names(test2)<-c("cofips", "day", "value", "date", "deaths")
+
+test$deaths<-test2$deaths
+```
+
+## Area resource file
+```{r}
+
+load(url("https://github.com/coreysparks/data/blob/master/arf2018.Rdata?raw=true"))
+arfs<-arf2018%>%
+  select(f0002013, f00011, f00012,  f1198417, f0978718 )%>%
+  mutate(cofips=paste(f00011, f00012, sep=""),  hpsa=f0978718)#%>%
+  #filter(f00011=="48")
+```
+
+## Merge data
+```{r}
+test2<-merge(test, arfs, by.x="cofips", by.y="cofips")
+
+test2<-merge(test2, po65, by="cofips")
+head(test2)
+```
+
+## Plotting - US data
+```{r}
+test2%>%
+  filter(date>"2020-03-01")%>%
+  mutate(Place = as.factor(case_when(.$f0002013=="01" ~ "metro >1 million population",
+                                     .$f0002013=="02" ~ "metro 250,000 to 1 million population",
+                                     .$f0002013=="03" ~ "metro <250,000 population",
+                                     .$f0002013=="04" ~ "Urban population of 20,000+, metro adjacent",
+                                     .$f0002013=="05" ~ "Urban population of 20,000+, not adjacent",
+                                     .$f0002013=="06" ~ "Urban population of 2,500-19,999, metro adjacent",
+                                     .$f0002013=="07" ~ "Urban population of 2,500-19,999, not adjacent",
+                                     .$f0002013=="08" ~ "Rural or <2,500 urban population, metro adjacent",
+                                     .$f0002013=="09" ~ "Rural or <2,500 urban population, not adjacent")))%>%
+  group_by( date)%>%
+  dplyr::summarise(ncases=sum(value), ndeaths=sum(deaths), poptot=sum(ntotal))%>%
+  mutate(rate = 100000*(ncases/poptot), cfr= 100*(ndeaths/ncases), prevday=lag(ncases,1))%>%
+  mutate(ch=ncases-prevday)%>%
+  #filter(f0002013!="01")%>%
+  ggplot(aes(y=ch, x=date))+#geom_point(aes(group=Place, color=Place))+ylim(c(0, 5))+
+  geom_ma(n=7,lty=1, lwd=1.1)+
+  geom_line()+
+  labs(title = "US COVID-19 Case Fatality Ratio",
+       subtitle = "March 1 - April 27, 2020. 4 day moving average",
+       caption = "Source: https://github.com/CSSEGISandData/COVID-19 \n Calculations by Corey S. Sparks, Ph.D.",
+       x = "Date",
+       y = "Fatalities per 100 Cases",
+       color = "RUCC Code") + 
+  theme_minimal()+ scale_color_brewer(type = "qual", palette = "Paired")+  theme(legend.position="bottom")#+scale_y_continuous(trans='log')
+
+ggsave(filename="~/covidcfr.png", height=10, width=12)
+```
+
+```{r}
+
+test2%>%
+  filter(date>"2020-03-01")%>%
+  #filter(substr(cofips,1,2)=="48")%>%
+  mutate(Place = as.factor(case_when(.$f0002013=="01" ~ "metro >1 million population",
+                                     .$f0002013=="02" ~ "metro 250,000 to 1 million population",
+                                     .$f0002013=="03" ~ "metro < 250,000 population",
+                                     .$f0002013=="04" ~ "Urban population of 20,000 +, metro adjacent",
+                                     .$f0002013=="05" ~ "Urban population of 20,000 +, metro adjacent",
+                                     .$f0002013=="06" ~ "Urban population of 2,500-19,999, metro adjacent",
+                                     .$f0002013=="07" ~ "Urban population of 2,500-19,999,metro adjacent",
+                                     .$f0002013=="08" ~ "Rural or < 2,500 urban population, metro adjacent",
+                                     .$f0002013=="09" ~ "Rural or < 2,500 urban population, not adjacent")))%>%
+  group_by(Place, date)%>%
+  dplyr::summarise(ncases=sum(value), ndeaths=sum(deaths), poptot=sum(ntotal))%>%
+  mutate(rate = 100000*(ncases/poptot), cfr= 100*(ndeaths/ncases), prevday=lag(ncases,1))%>%
+  mutate(ch=ncases-prevday)%>%
+  #mutate(ch=lag(ncases,2))%>%
+  #filter(f0002013!="01")%>%
+  ggplot(aes(y=ch/poptot, x=date))+#geom_line(aes(group=Place, color=stringr::str_wrap(Place,width = 15)), lwd=1.2)+
+  geom_ma(aes(group=Place, color=stringr::str_wrap(Place,width = 15)),n=,lty=1, lwd=1.1)+
+  labs(title = "US COVID-19 Incidence Rates",
+       subtitle = "March 1 - April 27, 2020: 4 day moving average",
+       caption = "Source: https://github.com/CSSEGISandData/COVID-19 \n Calculations by Corey S. Sparks, Ph.D.",
+       x = "Date",
+       y = "Rate per 100,000 population",
+       color = "RUCC Code") + 
+  theme_minimal()+scale_color_brewer(type = "qual", palette = "Paired")+theme(legend.position="bottom")#+scale_y_continuous(trans='log2')
+
+ggsave(filename="~/covidrate.png", height=10, width=12)
+```
+
+## Plotting - Texas data
+```{r}
+test2%>%
+  filter(date>"2020-03-01")%>%
+  filter(substr(cofips,1,2)=="48")%>%
+  mutate(Place = as.factor(case_when(.$f0002013=="01" ~ "metro >1 million population",
+                                     .$f0002013=="02" ~ "metro 250,000 to 1 million population",
+                                     .$f0002013=="03" ~ "metro <250,000 population",
+                                     .$f0002013=="04" ~ "Urban population of 20,000+, metro adjacent",
+                                     .$f0002013=="05" ~ "Urban population of 20,000+, not adjacent",
+                                     .$f0002013=="06" ~ "Urban population of 2,500-19,999, metro adjacent",
+                                     .$f0002013=="07" ~ "Urban population of 2,500-19,999, not adjacent",
+                                     .$f0002013=="08" ~ "Rural or <2,500 urban population, metro adjacent",
+                                     .$f0002013=="09" ~ "Rural or <2,500 urban population, not adjacent")))%>%
+  group_by(Place, date)%>%
+  dplyr::summarise(ncases=sum(value), ndeaths=sum(deaths), poptot=sum(ntotal))%>%
+  mutate(rate = 100000*(ncases/poptot), cfr= 100*(ndeaths/ncases), prevday=lag(ncases,1))%>%
+  mutate(ch=ncases-prevday)%>%
+  #mutate(ch=lag(ncases,2))%>%
+  ggplot(aes(y=ch/poptot, x=date))+#geom_point(aes(group=Place, color=Place))+ylim(c(0, 5))+
+  geom_ma(aes(group=Place, color=stringr::str_wrap(Place,width = 15)),n=7,lty=1, lwd=1.1)+
+  labs(title = "Texas COVID-19 Case Fatality Ratio",
+       subtitle = "March 1 - April 27, 2020. 4 day moving average",
+       caption = "Source: https://github.com/CSSEGISandData/COVID-19 \n Calculations by Corey S. Sparks, Ph.D.",
+       x = "Date",
+       y = "Fatalities per 100 Cases",
+       color = "RUCC Code") + 
+  theme_minimal()+ scale_color_brewer(type = "qual", palette = "Paired")+  theme(legend.position="bottom")#+ylim(c(0, 6))#+scale_y_continuous(trans='log2')
+
+ggsave(filename="~/txcovidcfr.png", height=10, width=12)
+```
+
+```{r}
+
+test2%>%
+  filter(date>"2020-03-01")%>%
+  filter(substr(cofips,1,2)=="48")%>%
+  mutate(Place = as.factor(case_when(.$f0002013=="01" ~ "metro >1 million population",
+                                     .$f0002013=="02" ~ "metro 250,000 to 1 million population",
+                                     .$f0002013=="03" ~ "metro < 250,000 population",
+                                     .$f0002013=="04" ~ "Urban population of 20,000 +, metro adjacent",
+                                     .$f0002013=="05" ~ "Urban population of 20,000 +, metro adjacent",
+                                     .$f0002013=="06" ~ "Urban population of 2,500-19,999, metro adjacent",
+                                     .$f0002013=="07" ~ "Urban population of 2,500-19,999,metro adjacent",
+                                     .$f0002013=="08" ~ "Rural or < 2,500 urban population, metro adjacent",
+                                     .$f0002013=="09" ~ "Rural or < 2,500 urban population, not adjacent")))%>%
+  group_by(Place, date)%>%
+  dplyr::summarise(ncases=sum(value), ndeaths=sum(deaths), poptot=sum(ntotal))%>%
+  mutate(rate = 100000*(ncases/poptot), cfr= 100*(ndeaths/ncases), prevday=lag(ncases,1))%>%
+  mutate(ch=ncases-prevday)%>%
+  #mutate(ch=lag(ncases,2))%>%
+  ggplot(aes(y=ch/poptot, x=date))+#geom_point(aes(group=Place, color=Place))+ylim(c(0, 5))+
+  geom_ma(aes(group=Place, color=stringr::str_wrap(Place,width = 15)),n=7,lty=1, lwd=1.1)+
+  labs(title = "TX COVID-19 Incidence Rates",
+       subtitle = "March 1 - April 27, 2020 - 4 day moving average",
+       caption = "Source: https://github.com/CSSEGISandData/COVID-19 \n Calculations by Corey S. Sparks, Ph.D.",
+       x = "Date",
+       y = "Rate per 100,000 population",
+       color = "RUCC Code") + 
+  theme_minimal()+scale_color_brewer(type = "qual", palette = "Paired")+theme(legend.position="bottom")#+scale_y_continuous(trans='log2')
+
+ggsave(filename="~/txcovidrate.png", height=10, width=12)
+```
+
+
+```{r, fig.height=18, fig.width=14}
+test2%>%
+  filter(date>"2020-04-01")%>%
+  filter(substr(cofips,1,2)=="48")%>%
+  mutate(nam=substr(name, 1,8))%>%
+  mutate(Place = as.factor(case_when(.$f0002013=="01" ~ "metro >1 million population",
+                                     .$f0002013=="02" ~ "metro 250,000 to 1 million population",
+                                     .$f0002013=="03" ~ "metro < 250,000 population",
+                                     .$f0002013=="04" ~ "Urban population of 20,000 +, metro adjacent",
+                                     .$f0002013=="05" ~ "Urban population of 20,000 +, metro adjacent",
+                                     .$f0002013=="06" ~ "Urban population of 2,500-19,999, metro adjacent",
+                                     .$f0002013=="07" ~ "Urban population of 2,500-19,999,metro adjacent",
+                                     .$f0002013=="08" ~ "Rural or < 2,500 urban population, metro adjacent",
+                                     .$f0002013=="09" ~ "Rural or < 2,500 urban population, not adjacent")))%>%
+  group_by(nam, date)%>%
+  summarise(ncases=sum(value), ndeaths=sum(deaths), poptot=sum(ntotal))%>%
+  filter(ncases  > 50,  poptot>200000)%>%
+  #dplyr::summarise(ncases=sum(value), ndeaths=sum(deaths), poptot=sum(ntotal))%>%
+  mutate(rate = 100000*(ncases/poptot), cfr= 100*(ndeaths/ncases), prevday=lag(ncases,1))%>%
+  mutate(ch=ncases-prevday)%>%
+  #mutate(ch=lag(ncases,2))%>%
+  ggplot(aes(y=ch/poptot, x=date))+#geom_point(aes(group=Place, color=Place))+ylim(c(0, 5))+
+ #mutate(ch=lag(ncases,2))%>%
+  #filter(f0002013!="01")%>%
+  #ggplot(aes(y=rate, x=date))+#geom_line(aes(group=cofips, color=cofips), lwd=1.1)+
+  geom_ma(n=,lty=1, lwd=1)+
+  labs(title = "TX COVID-19 Incidence Rates in Texas Counties",
+       subtitle = "March 15 - July 2, 2020 - 4 Day moving average in Counties with >200,000 Population ",
+       caption = "Source: https://github.com/CSSEGISandData/COVID-19 \n Calculations by Corey S. Sparks, Ph.D.",
+       x = "Date",
+       y = "Rate per 100,000 population",
+       color = "RUCC Code") + facet_wrap(~nam)+
+  theme_minimal()+#scale_color_brewer(type = "qual", palette = "Paired")+
+  theme(legend.position="bottom")#+scale_y_continuous(trans='log2')
+
+ggsave(filename="~/txcovidrate_cos.png", height=10, width=12)
+```
+
+```{r}
+library(geofacet)
+stfips<-data.frame(stfip=unique(fips_codes$state_code), stname=unique(fips_codes$state_name))
+load(url("https://github.com/coreysparks/data/blob/master/segregation_county.Rdata?raw=true"))
+head(county_dat)
+
+mdat<-merge(test2,county_dat, "cofips")
+
+head(mdat)
+
+mdat$seg_cut<-cut(mdat$isolation_b, breaks = c(0,.2,.98), include.lowest = T)
+mdat$metro<- ifelse( mdat$f0002013%in%c("01", "02", "03"), "metro",
+                     ifelse(mdat$f0002013%in%c("04", "05", "06", "07"), "nonmetro", "rural"))
+
+rates<-aggregate(cbind(value, deaths, ntotal)~date, data=mdat, FUN=sum)
+head(rates)
+rates$inc<-rates$value/rates$ntotal
+
+mdat<-merge(mdat, rates[, c(1,5)], by = "date")
+mdat$E<-mdat$ntotal*mdat$inc
+mdat$stfip<-substr(mdat$cofips,1,2)
+mdat<-merge(mdat, stfips, by.x="stfip", by.y="stfip")
+```
+
+```{r}
+mdat%>%
+  filter(date>"2021-06-01")%>%
+  #filter(substr(cofips,1,2)=="48")%>%
+  mutate(state = substr(cofips, 1,2))%>%
+  group_by(stname, date)%>%
+  summarise(ncases=sum(value),ne=sum(E), ndeaths=sum(deaths), poptot=sum(ntotal))%>%
+  mutate(rate = 100*(ncases/poptot), cfr= 100*(ndeaths/ncases), prevday=lag(ncases,1))%>%
+  mutate(ch=ncases-prevday)%>%
+  #mutate(ch=lag(ncases,2))%>%
+  #filter(f0002013!="01")%>%
+  ggplot(aes(y=1000*(ch/poptot), x=date))+#geom_line(aes(group=Place, color=stringr::str_wrap(Place,width = 15)), lwd=1.2)+
+  geom_ma(n=7,lty=1, lwd=1.1)+#ylim(c(0,5))+
+  #geom_hline(yintercept = 1, col="black")+
+  facet_geo(~stname)+
+  labs(title = "State COVID-19 Incidence Rate",
+       subtitle = "June 1, 2021 - January 4,2022 - 7 day moving average",
+       caption = "Source: https://github.com/CSSEGISandData/COVID-19 \nCalculations by Corey S. Sparks, Ph.D.",
+       x = "Date",
+       y = "Per Captia Rate, per 1,000 Population",
+       color = "Segregation") + 
+  theme_minimal()+
+  scale_color_brewer(type = "qual", palette = "Paired")+
+  theme(legend.position="bottom")#+scale_y_continuous(trans='log2')
+
+ggsave(filename="~/state RRcovidrate.png", height=12, width=18)
+```
+
+```{r}
+mdat%>%
+  filter(date>"2020-03-01")%>%
+#   filter(substr(cofips,1,2)=="48")%>%
+  group_by(p65cut,metro,  date)%>%
+    summarise(ncases=sum(value),ne=sum(E), ndeaths=sum(deaths), poptot=sum(ntotal))%>%
+  mutate(rate =(ncases/ne), cfr= 100*(ndeaths/ncases), prevday=lag(ncases,1) )%>%
+  filter(ncases  > 50,  poptot>200000)%>%
+  #dplyr::summarise(ncases=sum(value), ndeaths=sum(deaths), poptot=sum(ntotal))%>%
+  mutate(ch=ncases-prevday)%>%
+  mutate(irate =(ch/poptot), cfr= 100*(ndeaths/ncases) )%>%
+   #filter(f0002013!="01")%>%
+  ggplot(aes(y=irate, x=date))+#geom_line(aes(group=Place, color=stringr::str_wrap(Place,width = 15)), lwd=1.2)+
+  geom_ma(aes(group=p65cut, color=p65cut),n=4,lty=1, lwd=1.1)+
+  facet_wrap(~metro)+
+  labs(title = "TX COVID-19 Incidence Rates",
+       subtitle = "March 1 - April 27, 2020 - 4 day moving average",
+       caption = "Source: https://github.com/CSSEGISandData/COVID-19 \n Calculations by Corey S. Sparks, Ph.D.",
+       x = "Date",
+       y = "Rate per 100,000 population (log)",
+       color = "% over age 65") + 
+  theme_minimal()+scale_color_brewer(type = "qual", palette = "Paired")+theme(legend.position="bottom")#+scale_y_continuous(trans='log10')
+
+```
+
+```{r, eval=FALSE}
+mdat$week<-cut(as.Date(mdat$date), "week")
+library(lme4)
+sub<-mdat[mdat$value>0,]
+
+ fit<-glmer(value~offset(log(E))+seg_cut+factor(week)+(1|stname), data=sub, subset=sub$date>"2020-03-01",family=poisson, control = glmerControl(optimizer = c("bobyqa", "Nelder_Mead"), optCtrl=list(maxfun=2e5)))
+ fit<-refit(fit)
+ summary(fit)
+ exp(coef(fit))
+
+ head(mdat)
+
+
+library(brms)
+options(mc.cores = parallel::detectCores()-1)
+ncores<-options("mc.cores")
+mod1<-brm(value~offset(log(E))+seg_cut+factor(week)+(1|stname), data=sub[sub$date>"2020/3/15/",],chains = ncores, family = "poisson")
+summary(mod1)
+
+```
+## Maps of Texas cases
+```{r, eval=FALSE}
+cos$fips<-as.character(cos$fips)
+
+geodat<-merge(cos, mdat,by.x="fips",by.y="cofips" )
+
+# library(INLA)
+# inla.pardiso()
+# w#quantile(mdat$confirmed, na.rm=T,p=seq(0,1,length.out = 7))
+# library(ggplot2)
+# require(scales)
+# options(scipen=10000)
+# brks<- quantile(geodat$value, na.rm=T,p=seq(0,1,length.out = 7))
+# brks
+
+#library(scales)
+#brks<-c(0,5,10,15,50,100,2000)
+#labs<-scales::comma(x = brks)
+geodat%>%
+  filter(value>1)%>%
+  filter(date>"2020-06-01")%>%
+  mutate(rate = (value/E))%>%
+  mutate(rate=cut(rate,breaks = c(0, .1, .5, 1, 1.5, 3, 10), include.lowest = T))%>%
+  ggplot()+geom_sf(aes(fill=rate))+
+  facet_wrap(~date)+
+  scale_fill_viridis_d()
+
+ggsave(filename="~/txsp.png", height=24, width=24)
+```
