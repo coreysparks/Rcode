@@ -1,4 +1,4 @@
-Rcode
+Corey Sparks's Rcode 
 =====
 
-I will put all of my R markdown code for my rpubs examples here. The data are in the data folder
+I will put miscellaneous code files here that I use in my courses and other examples. 
