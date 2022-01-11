@@ -40,9 +40,9 @@ cos$fips<-as.numeric(cos$GEOID)
 #ests<-get_estimates(geography="county", year=2018, product = "characteristics",breakdown = "AGEGROUP", output = "wide")
 # head(ests)
 # save(ests, file="~/Documents/GitHub//county_age_estimates.Rdata")
-load("https://github.com/coreysparks/data/blob/master/county_age_estimates.Rdata?raw=true")
-est65<-ests[ests$AGEGROUP==26,]
-total<-ests[ests$AGEGROUP==0,]
+load(url("https://github.com/coreysparks/data/blob/master/county_age_estimates.Rdata?raw=true"))
+est65<-coests[coests$AGEGROUP==26,]
+total<-coests[coests$AGEGROUP==0,]
 po65<-cbind(est65[, c(1,2,3)], total[,3 ])
 names(po65)<-c("cofips", "name", "n65plus", "ntotal")
 po65$p65plus<-po65$n65plus/po65$ntotal
@@ -62,8 +62,8 @@ files
 ```
 
 ```{r}
-dat<-read.csv("~/Documents/GitHub//COVID-19/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv") #cases
-dat2<-read.csv("~/Documents/GitHub//COVID-19/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv") #deaths
+dat<-read.csv("~/GitHub//COVID-19/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv") #cases
+dat2<-read.csv("~/GitHub//COVID-19/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv") #deaths
 
 #clean case data
 test<-dat%>%
