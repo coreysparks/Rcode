@@ -18,7 +18,7 @@ mutate_quantile_brks <- function (input, variable,n, ...)
                                                        1])
     }
   }
-  input[[paste0(var_string, "_brks")]] <- cut(input[[var_string]], 
+  input[[paste0(var_string, "_qbrks")]] <- cut(input[[var_string]], 
                                               breaks = brk_vec, labels = brk_labs, include.lowest = TRUE)
   return(input)
 }
