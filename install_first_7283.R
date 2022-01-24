@@ -6,4 +6,4 @@ library(ctv)
 install.views(c("SocialSciences", "ReproducibleResearch"),
               coreOnly = T )
 
-
+devtools::install_github("rstudio/rmarkdown")
