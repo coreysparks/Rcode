@@ -1,0 +1,27 @@
+---
+title: "Untitled"
+author: "Corey Sparks"
+date: "3/3/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Here is the setup code!
+```{r setup}
+library(DBI)
+con <- dbConnect(RSQLite::SQLite(), dbname = ":memory:")
+dbWriteTable(con, "acs_p", read.csv("C:/Users/ozd504/Github/r_courses/data/pums_tx_ca_2019.csv"), overwrite=T)
+dbWriteTable(con, "acs_h", read.csv("C:/Users/ozd504/Github/r_courses/data/pums_tx_ca_hh_2019.csv"), overwrite=T)
+```
+
+## Here is the sql code!
+```{sql, connection=con}
+SELECT * FROM acs_p LIMIT 10 WHERE AGEP <18;
+```
+## And here is different sql code!
+```{sql, connection=con}
+SELECT * FROM acs_h LIMIT 10
+```
