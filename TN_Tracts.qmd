@@ -1,7 +1,14 @@
 ---
 title: "Tennessee Census Tracts"
 author: "Corey Sparks"
-format: html
+format: 
+    html:
+      self-contained: true
+      code-fold: true
+      code-tools: true
+      code-link: true
+      df-print: paged
+      toc: true
 editor: visual
 ---
 
@@ -19,6 +26,6 @@ tntr<- tracts(state="TN", cb=T)%>%
 ```{r, echo=FALSE}
 mapview::mapview(tntr,
                  zcol = "NAMELSADCO",
-                 basemaps="OpenStreetMap.Mapnik",
+                 basemaps="OpenStreetMap",
                  alpha.regions =.25)
 ```
