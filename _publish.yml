@@ -1,0 +1,4 @@
+- source: TN_Tracts.qmd
+  quarto-pub:
+    - id: 82585b4b-128f-4b81-9dd0-23742daf251a
+      url: 'https://quartopub.com/sites/coreysparks/tennessee-census-tracts'

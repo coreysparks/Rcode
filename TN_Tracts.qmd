@@ -1,0 +1,24 @@
+---
+title: "Tennessee Census Tracts"
+author: "Corey Sparks"
+format: html
+editor: visual
+---
+
+## Tennessee Census Tract map
+
+```{r, results='hide', message=FALSE, echo=FALSE}
+library(tigris, quietly = T)
+library(sf, quietly = T)
+library(tidyverse, quietly = T)
+
+tntr<- tracts(state="TN", cb=T)%>%
+  select(NAMELSAD, NAMELSADCO)
+```
+
+```{r, echo=FALSE}
+mapview::mapview(tntr,
+                 zcol = "NAMELSADCO",
+                 basemaps="OpenStreetMap.Mapnik",
+                 alpha.regions =.25)
+```

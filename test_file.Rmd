@@ -1,0 +1,30 @@
+---
+title: "Test doc"
+author: "Corey Sparks"
+date: "2/17/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Different distributions have different link functions....**
+
+|   Distribution   | Mean    | Variance|  Link Function      | Range of Outcome |  
+|:------------:|:----------------:|:----------------:|:----------------:|:----------------:|
+|   Gaussian    | $\mu$ |$\sigma^2$ | Identity    | $-\infty ,  \infty$ |
+|   Binomial  | $\pi$ | $n\pi(1-\pi)$ | $log \left (\frac{\pi}{1-\pi} \right )$    | $\frac{0,1,2,...n}{n}$ |
+|   Poisson    | $\lambda$ | $\lambda$ | $log (\lambda)$    | $(0,1,2,...)$ |
+|   Gamma    | $\mu$ | $\phi \mu^2$ | $log (\mu)$    | $(0, \infty)$ |
+|   Negative Binomial | $n(1-p)/p$ | $n(1-p)/p^2$ | $log (\mu)$    | $(0,1,2,...)$ |
+| Student-t | $\mu$ | $\frac{\sigma^2 \nu}{\nu-2}$| Identity | $-\infty ,  \infty$ |
+
+
+$$
+f(y) = 1/(2\sigma*sqrt(2* \pi))
+$$
+
+if
+$$y= \mu = 1-exp(-(((x- \mu)/ \sigma)^2)/2))/(sqrt(2*\pi)*\sigma*((x-\mu)/\sigma)^2) if y!= \mu
+$$
