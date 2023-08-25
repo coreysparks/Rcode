@@ -23,6 +23,9 @@ merged |>
             legend.outside=T)+
   tm_scale_bar(position = c(.5, .2))+
   tm_compass() +
-  tm_credits("Code Source", align = "left", width = .9, position = c(0, -0))
+  tm_credits("Data source: \nhttps://data.worldbank.org/indicator/EN.ATM.CO2E.KT\nCreated by Corey S. Sparks", align = "left", width = .95, bg.color = "grey", bg.alpha = .2)
   
-tmap_save(filename = "worldco2.png", width = 10, height =6, dpi = 150)
+tmap_save(filename = "worldco2.png",
+          width = 10, 
+          height =6, 
+          dpi = 150)
